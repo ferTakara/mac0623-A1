@@ -1,0 +1,4 @@
+participant_id,mapping,trial_number,presentation_order,completion_time_s,final_position_error,final_orientation_error_deg,mode_switches,path_length
+P01,2,2,2,33.936,0.0338,8.18,0,2.5927
+P01,2,3,3,46.146,0.0209,3.38,0,5.2665
+P01,2,4,4,12.180,0.0256,4.14,0,1.9787
