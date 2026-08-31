@@ -5,7 +5,7 @@ import glob
 import os
 
 def main():
-    files = glob.glob('*1.csv') + glob.glob('*2.csv')
+    files = glob.glob('CSV/*1.csv') + glob.glob('CSV/*2.csv')
 
     dfs = []
     for file in files:
