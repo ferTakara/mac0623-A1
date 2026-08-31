@@ -1,0 +1,18 @@
+A tarefa consiste em rotacionar e mover o cubo num espaço 3D e colocá-lo na posição pedida pelo programa com dois mapeamentos de controle diferentes. Nesse primeiro mapeamento, o você vai utilizar apenas o mouse para manipular o cubo, tendo dois modos que você pode alternar clicando o tab ou o espaço, sendo esses de transladar e rotacionar o cubo.
+
+Ja no segundo você vai usar tanto o mouse quanto o teclado, usando as teclas Q, W, E, A, S e D para rotaciona-lo
+
+P01
+Tem que trocar o Q e E pelo A e D (Inverter)
+Com teclado é melhor em intuição e rapido
+Acha que so com teclado a atividade seria melhor
+
+P02
+Odiou o mapping 1, principalmente por ter que usar o touchpad do notebook para utilizar a função do scroll, a qual o movimento do touchpad ele não estava acostumado.
+Preferiou o segundo mapping por conta da menor necessidade de usar o scroll, na qual pode usar o teclado
+
+P03
+Preferiou o mapping 2 por achar mais usual fazer tarefas usando o teclado o mouse, como muitos video games fazem. Alem disso sentiu mais controle e precisão ao controlar o cubo.
+
+P04
+O so no mouse achou mais intuitivo, mas perdeu mais precisão. Trackpad eh foda. Sentiu uma preferência não por muito para o do mouse
