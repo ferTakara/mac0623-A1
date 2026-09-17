@@ -42,7 +42,7 @@ const GRID_COLOR_LINES = 0x2a2a2a;
 // instead of a rotationally-symmetric single-color cube. Same convention
 // as the Class 4 station app (labs/c04-ep01 and 02/): +Z is the bright
 // "marked" face.
-const CUBE_FACE_COLORS = [0x3f7fd6, 0x2c5aa0, 0xe0c341, 0xa08a2c, 0xff5c5c, 0x7a2f2f];
+const CUBE_FACE_COLORS = [0xffffff, 0xffff33, 0x3388ff, 0x33ff33, 0xff3333, 0xffa500];
 
 // Lighting
 const HEMISPHERE_LIGHT_INTENSITY = 1.2;
