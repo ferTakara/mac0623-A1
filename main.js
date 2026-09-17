@@ -900,6 +900,16 @@ function getClosestPointOnAxis(rayOrigin, rayDir, axisOrigin, axisDir) {
     return p1.clone().add(d1.clone().multiplyScalar(t));
 }
 
+function getPlaneIntersection(rayOrigin, rayDir, center, normal) {
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, center);
+    const ray = new THREE.Ray(rayOrigin, rayDir);
+    const target = new THREE.Vector3();
+    if (ray.intersectPlane(plane, target)) {
+        return target;
+    }
+    return null;
+}
+
 let translateDummy = new THREE.Object3D();
 
 function setupWebXR() {
@@ -981,6 +991,12 @@ function onGrabStart(event) {
                 controller.userData.initialDragPoint = getClosestPointOnAxis(rayOrigin, rayDir, cube.position, hit.userData.axis);
             } else if (hit.userData.type === 'rotate') {
                 controller.userData.mode = "gizmo_rotate";
+                const p = getPlaneIntersection(rayOrigin, rayDir, cube.position, hit.userData.axis);
+                if (p) {
+                    controller.userData.initialDragVector = p.clone().sub(cube.position).normalize();
+                } else {
+                    controller.userData.initialDragVector = new THREE.Vector3(1, 0, 0); // fallback
+                                }
             }
         }
     }
@@ -1066,7 +1082,23 @@ function updateWebXR() {
               const delta = currentDragPoint.clone().sub(controller.userData.initialDragPoint);
               cube.position.copy(controller.userData.initialCubePos).add(delta);
             } else if (controller.userData.mode === "gizmo_rotate") {
-
+                const tempMatrix = new THREE.Matrix4();
+                tempMatrix.identity().extractRotation(controller.matrixWorld);
+                const rayOrigin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
+                const rayDir = new THREE.Vector3(0, 0, -1).applyMatrix4(tempMatrix);
+    
+                const p = getPlaneIntersection(rayOrigin, rayDir, controller.userData.initialCubePos, controller.userData.axis);
+                if (p) {
+                    const v = p.clone().sub(controller.userData.initialCubePos).normalize();
+                    const initV = controller.userData.initialDragVector;
+                    
+                    const cross = new THREE.Vector3().crossVectors(initV, v);
+                    const angle = Math.atan2(cross.dot(controller.userData.axis), initV.dot(v));
+                    
+                    const deltaRot = new THREE.Quaternion().setFromAxisAngle(controller.userData.axis, angle);
+                    cube.quaternion.copy(deltaRot.clone().multiply(controller.userData.initialCubeRot));
+                    cube.quaternion.normalize();
+                }
             }
         }
     });
