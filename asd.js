@@ -818,15 +818,102 @@ function handleMapping2(delta) {
 //
 // getIntersections(controller, objects) and buildControllerRay() are
 // provided for you, right below this block — same raycasting helper as
-// lab08, plus the visib// Gizmo state
+// lab08, plus the visible ray line so you can actually see where the
+// controller is pointing in the emulator.
+
+// Gizmo state
 const gizmoGroup = new THREE.Group();
 const gizmoHits = [];
 
 function buildGizmo() {
-    // Build VR Gizmo
-    // Render per-axis handles, add them to gizmoGroup, and populate gizmoHits for raycasting
+    const createArrow = (color, euler, axisName) => {
+        const group = new THREE.Group();
+        const mat = new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.7 });
+        
+        const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.3, 8), mat);
+        stem.position.y = 0.15;
+        group.add(stem);
+        
+        const head = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.1, 8), mat);
+        head.position.y = 0.35;
+        group.add(head);
+        
+        const hit = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.4, 8), new THREE.MeshBasicMaterial({ visible: false }));
+        hit.position.y = 0.2;
+        group.add(hit);
+        
+        group.quaternion.setFromEuler(euler);
+        hit.userData.type = 'translate';
+        hit.userData.axisName = axisName;
+        hit.userData.axis = new THREE.Vector3(0,1,0).applyEuler(euler).normalize();
+        
+        return { group, hit };
+    };
 
+    const createRing = (color, euler, axisName) => {
+        const group = new THREE.Group();
+        const mat = new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.7, side: THREE.DoubleSide });
+        
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.01, 8, 32), mat);
+        group.add(ring);
+        
+        const hit = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.06, 8, 32), new THREE.MeshBasicMaterial({ visible: false }));
+        group.add(hit);
+        
+        group.quaternion.setFromEuler(euler);
+        hit.userData.type = 'rotate';
+        hit.userData.axisName = axisName;
+        hit.userData.axis = new THREE.Vector3(0,0,1).applyEuler(euler).normalize();
+        
+        return { group, hit };
+    };
+
+    const tX = createArrow(0xff3333, new THREE.Euler(0, 0, -Math.PI/2), 'X');
+    const tY = createArrow(0x33ff33, new THREE.Euler(0, 0, 0), 'Y');
+    const tZ = createArrow(0x3333ff, new THREE.Euler(Math.PI/2, 0, 0), 'Z');
+    
+    const rX = createRing(0xff3333, new THREE.Euler(0, Math.PI/2, 0), 'X');
+    const rY = createRing(0x33ff33, new THREE.Euler(Math.PI/2, 0, 0), 'Y');
+    const rZ = createRing(0x3333ff, new THREE.Euler(0, 0, 0), 'Z');
+    
+    gizmoGroup.add(tX.group, tY.group, tZ.group);
+    gizmoGroup.add(rX.group, rY.group, rZ.group);
+    
+    gizmoHits.push(tX.hit, tY.hit, tZ.hit, rX.hit, rY.hit, rZ.hit);
 }
+
+function getClosestPointOnAxis(rayOrigin, rayDir, axisOrigin, axisDir) {
+    const p1 = axisOrigin;
+    const d1 = axisDir.clone().normalize();
+    const p2 = rayOrigin;
+    const d2 = rayDir.clone().normalize();
+    
+    const n = new THREE.Vector3().crossVectors(d1, d2);
+    if (n.lengthSq() < 1e-5) {
+        const v = new THREE.Vector3().subVectors(p2, p1);
+        const t = v.dot(d1);
+        return p1.clone().add(d1.clone().multiplyScalar(t));
+    }
+    const n2 = new THREE.Vector3().crossVectors(d2, n);
+    const denom = d1.dot(n2);
+    if (Math.abs(denom) < 1e-5) return p1.clone();
+    const v = new THREE.Vector3().subVectors(p2, p1);
+    const t = v.dot(n2) / denom;
+    
+    return p1.clone().add(d1.clone().multiplyScalar(t));
+}
+
+function getPlaneIntersection(rayOrigin, rayDir, center, normal) {
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, center);
+    const ray = new THREE.Ray(rayOrigin, rayDir);
+    const target = new THREE.Vector3();
+    if (ray.intersectPlane(plane, target)) {
+        return target;
+    }
+    return null;
+}
+
+let translateDummy = new THREE.Object3D();
 
 function setupWebXR() {
     renderer.xr.enabled = true;
@@ -838,6 +925,7 @@ function setupWebXR() {
     controllerGrip0 = ctrls.grip0;
     controllerGrip1 = ctrls.grip1;
 
+    scene.add(translateDummy);
     buildGizmo();
     scene.add(gizmoGroup);
 
@@ -859,44 +947,72 @@ function onGrabStart(event) {
     const rayDir = new THREE.Vector3(0, 0, -1).applyMatrix4(tempMatrix);
 
     if (mapping === "3") {
-        // 3. VR Direct Grab (6DoF)
+        // Direct Grab 6DoF
         const hits = getIntersections(controller, [cube]);
         if (hits.length > 0) {
             controller.userData.mode = "direct";
             controller.userData.selected = cube;
             controller.attach(cube);
         }
-
     } else if (mapping === "4") {
-        // 4. VR Trackball
-        // Implement VR trackball 
-        // (rotation-only and indirect, translation stays a separate direct grab step)
-
+        // VR Trackball
+        const hits = getIntersections(controller, [cube]);
+        if (hits.length > 0) {
+            controller.userData.mode = "translate";
+            controller.userData.selected = cube;
+            translateDummy.position.copy(cube.position);
+            controller.attach(translateDummy);
+        } else {
+            controller.userData.mode = "rotate";
+            controller.userData.selected = cube;
+            controller.userData.previousRot = controller.quaternion.clone();
+            
+            // GAIN FACTOR JUSTIFICATION:
+            // A gain of 2.0 amplifies wrist rotations, reducing physical strain and 
+            // avoiding awkward arm contortions (like the "gorilla arm" effect). 
+            // It maps a comfortable 90-degree wrist turn to a full 180-degree flip 
+            // of the object, offering a good balance between precision and ergonomic range.
+            controller.userData.gain = 2.0; 
+        }
     } else if (mapping === "5") {
-        // 5. VR Gizmo
-        // Implement VR Gizmo raycasting and constrain the drag to axis/plane
+        // VR Gizmo
+        const hits = getIntersections(controller, gizmoHits);
+        if (hits.length > 0) {
+            const hit = hits[0].object;
+            controller.userData.selected = cube;
+            controller.userData.gizmoType = hit.userData.type;
+            controller.userData.axis = hit.userData.axis;
+            controller.userData.initialCubePos = cube.position.clone();
+            controller.userData.initialCubeRot = cube.quaternion.clone();
 
+            if (hit.userData.type === 'translate') {
+                controller.userData.mode = "gizmo_translate";
+                controller.userData.initialDragPoint = getClosestPointOnAxis(rayOrigin, rayDir, cube.position, hit.userData.axis);
+            } else if (hit.userData.type === 'rotate') {
+                controller.userData.mode = "gizmo_rotate";
+                const p = getPlaneIntersection(rayOrigin, rayDir, cube.position, hit.userData.axis);
+                if (p) {
+                    controller.userData.initialDragVector = p.clone().sub(cube.position).normalize();
+                } else {
+                    controller.userData.initialDragVector = new THREE.Vector3(1, 0, 0); // fallback
+                }
+            }
+        }
     }
 }
 
 function onGrabEnd(event) {
     const controller = event.target;
-    const mapping = currentMapping();
+    if (!controller.userData.selected) return;
     
-    if (mapping === "3") {
-        // 3. VR Direct Grab (6DoF)
-        // Handle release for Direct Grab (release on selectend)
+    if (controller.userData.mode === "direct") {
         scene.attach(cube);
-
-    } else if (mapping === "4") {
-        // 4. VR Trackball
-        // Handle release for VR Trackball
-
-    } else if (mapping === "5") {
-        // 5. VR Gizmo
-        // Handle release for VR Gizmo
-
+    } else if (controller.userData.mode === "translate") {
+        scene.attach(translateDummy);
     }
+    
+    controller.userData.mode = null;
+    controller.userData.selected = null;
 }
 
 function updateWebXR() {
@@ -913,18 +1029,61 @@ function updateWebXR() {
     [controller0, controller1].forEach(controller => {
         if (!controller || !controller.userData.selected) return;
         
-        if (mapping === "3") {
-            // 3. VR Direct Grab (6DoF)
-            // Update logic for Direct Grab (if any)
+        if (controller.userData.mode === "translate") {
+            let dummyWorldPos = new THREE.Vector3();
+            translateDummy.getWorldPosition(dummyWorldPos);
+            cube.position.copy(dummyWorldPos);
+        } else if (controller.userData.mode === "rotate") {
+            const currentRot = controller.quaternion.clone();
+            const deltaRot = currentRot.clone().multiply(controller.userData.previousRot.clone().invert());
+            
+            let w = THREE.MathUtils.clamp(deltaRot.w, -1, 1);
+            let angle = 2 * Math.acos(w);
+            
+            if (angle > 0.0001) {
+                let sinHalfAngle = Math.sqrt(1 - w * w);
+                let axis = new THREE.Vector3(deltaRot.x, deltaRot.y, deltaRot.z);
+                if (sinHalfAngle > 0.001) {
+                    axis.divideScalar(sinHalfAngle);
+                } else {
+                    axis.normalize();
+                }
+                
+                const scaledAngle = angle * controller.userData.gain;
+                const scaledDelta = new THREE.Quaternion().setFromAxisAngle(axis, scaledAngle);
+                
+                cube.quaternion.premultiply(scaledDelta);
+                cube.quaternion.normalize();
+            }
+            
+            controller.userData.previousRot.copy(currentRot);
+        } else if (controller.userData.mode === "gizmo_translate") {
+            const tempMatrix = new THREE.Matrix4();
+            tempMatrix.identity().extractRotation(controller.matrixWorld);
+            const rayOrigin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
+            const rayDir = new THREE.Vector3(0, 0, -1).applyMatrix4(tempMatrix);
 
-        } else if (mapping === "4") {
-            // 4. VR Trackball
-            // Update logic for VR Trackball (apply rotation delta)
+            const currentDragPoint = getClosestPointOnAxis(rayOrigin, rayDir, controller.userData.initialCubePos, controller.userData.axis);
+            const delta = currentDragPoint.clone().sub(controller.userData.initialDragPoint);
+            cube.position.copy(controller.userData.initialCubePos).add(delta);
+        } else if (controller.userData.mode === "gizmo_rotate") {
+            const tempMatrix = new THREE.Matrix4();
+            tempMatrix.identity().extractRotation(controller.matrixWorld);
+            const rayOrigin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
+            const rayDir = new THREE.Vector3(0, 0, -1).applyMatrix4(tempMatrix);
 
-        } else if (mapping === "5") {
-            // 5. VR Gizmo
-            // Update logic for VR Gizmo (drag constraint)
-
+            const p = getPlaneIntersection(rayOrigin, rayDir, controller.userData.initialCubePos, controller.userData.axis);
+            if (p) {
+                const v = p.clone().sub(controller.userData.initialCubePos).normalize();
+                const initV = controller.userData.initialDragVector;
+                
+                const cross = new THREE.Vector3().crossVectors(initV, v);
+                const angle = Math.atan2(cross.dot(controller.userData.axis), initV.dot(v));
+                
+                const deltaRot = new THREE.Quaternion().setFromAxisAngle(controller.userData.axis, angle);
+                cube.quaternion.copy(deltaRot.clone().multiply(controller.userData.initialCubeRot));
+                cube.quaternion.normalize();
+            }
         }
     });
 }
