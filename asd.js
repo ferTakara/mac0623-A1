@@ -42,7 +42,7 @@ const GRID_COLOR_LINES = 0x2a2a2a;
 // instead of a rotationally-symmetric single-color cube. Same convention
 // as the Class 4 station app (labs/c04-ep01 and 02/): +Z is the bright
 // "marked" face.
-const CUBE_FACE_COLORS = [0xffffff, 0xffff33, 0x3388ff, 0x33ff33, 0xff3333, 0xffa500];
+const CUBE_FACE_COLORS = [0x3f7fd6, 0x2c5aa0, 0xe0c341, 0xa08a2c, 0xff5c5c, 0x7a2f2f];
 
 // Lighting
 const HEMISPHERE_LIGHT_INTENSITY = 1.2;
@@ -818,7 +818,10 @@ function handleMapping2(delta) {
 //
 // getIntersections(controller, objects) and buildControllerRay() are
 // provided for you, right below this block — same raycasting helper as
-// lab08, plus the visib// Gizmo state
+// lab08, plus the visible ray line so you can actually see where the
+// controller is pointing in the emulator.
+
+// Gizmo state
 const gizmoGroup = new THREE.Group();
 const gizmoHits = [];
 
@@ -900,6 +903,16 @@ function getClosestPointOnAxis(rayOrigin, rayDir, axisOrigin, axisDir) {
     return p1.clone().add(d1.clone().multiplyScalar(t));
 }
 
+function getPlaneIntersection(rayOrigin, rayDir, center, normal) {
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, center);
+    const ray = new THREE.Ray(rayOrigin, rayDir);
+    const target = new THREE.Vector3();
+    if (ray.intersectPlane(plane, target)) {
+        return target;
+    }
+    return null;
+}
+
 let translateDummy = new THREE.Object3D();
 
 function setupWebXR() {
@@ -934,18 +947,15 @@ function onGrabStart(event) {
     const rayDir = new THREE.Vector3(0, 0, -1).applyMatrix4(tempMatrix);
 
     if (mapping === "3") {
-        // 3. VR Direct Grab (6DoF)
+        // Direct Grab 6DoF
         const hits = getIntersections(controller, [cube]);
         if (hits.length > 0) {
             controller.userData.mode = "direct";
             controller.userData.selected = cube;
             controller.attach(cube);
         }
-
     } else if (mapping === "4") {
-        // 4. VR Trackball
-        // Implement VR trackball 
-        // (rotation-only and indirect, translation stays a separate direct grab step)
+        // VR Trackball
         const hits = getIntersections(controller, [cube]);
         if (hits.length > 0) {
             controller.userData.mode = "translate";
@@ -965,8 +975,7 @@ function onGrabStart(event) {
             controller.userData.gain = 2.0; 
         }
     } else if (mapping === "5") {
-        // 5. VR Gizmo
-        // Implement VR Gizmo raycasting and constrain the drag to axis/plane
+        // VR Gizmo
         const hits = getIntersections(controller, gizmoHits);
         if (hits.length > 0) {
             const hit = hits[0].object;
@@ -981,6 +990,12 @@ function onGrabStart(event) {
                 controller.userData.initialDragPoint = getClosestPointOnAxis(rayOrigin, rayDir, cube.position, hit.userData.axis);
             } else if (hit.userData.type === 'rotate') {
                 controller.userData.mode = "gizmo_rotate";
+                const p = getPlaneIntersection(rayOrigin, rayDir, cube.position, hit.userData.axis);
+                if (p) {
+                    controller.userData.initialDragVector = p.clone().sub(cube.position).normalize();
+                } else {
+                    controller.userData.initialDragVector = new THREE.Vector3(1, 0, 0); // fallback
+                }
             }
         }
     }
@@ -989,21 +1004,13 @@ function onGrabStart(event) {
 function onGrabEnd(event) {
     const controller = event.target;
     if (!controller.userData.selected) return;
-    const mapping = currentMapping();
     
-    if (mapping === "3") {
-        // 3. VR Direct Grab (6DoF)
-        // Handle release for Direct Grab (release on selectend)
+    if (controller.userData.mode === "direct") {
         scene.attach(cube);
-
-    } else if (mapping === "4") {
-        // 4. VR Trackball
-        // Handle release for VR Trackball
-        if (controller.userData.mode === "translate") {
-          scene.attach(translateDummy);
-        }
+    } else if (controller.userData.mode === "translate") {
+        scene.attach(translateDummy);
     }
-
+    
     controller.userData.mode = null;
     controller.userData.selected = null;
 }
@@ -1022,13 +1029,11 @@ function updateWebXR() {
     [controller0, controller1].forEach(controller => {
         if (!controller || !controller.userData.selected) return;
         
-         if (mapping === "4") {
-          // 4. VR Trackball
-          if (controller.userData.mode === "translate") {
+        if (controller.userData.mode === "translate") {
             let dummyWorldPos = new THREE.Vector3();
             translateDummy.getWorldPosition(dummyWorldPos);
             cube.position.copy(dummyWorldPos);
-          } else if (controller.userData.mode === "rotate") {
+        } else if (controller.userData.mode === "rotate") {
             const currentRot = controller.quaternion.clone();
             const deltaRot = currentRot.clone().multiply(controller.userData.previousRot.clone().invert());
             
@@ -1039,9 +1044,9 @@ function updateWebXR() {
                 let sinHalfAngle = Math.sqrt(1 - w * w);
                 let axis = new THREE.Vector3(deltaRot.x, deltaRot.y, deltaRot.z);
                 if (sinHalfAngle > 0.001) {
-                  axis.divideScalar(sinHalfAngle);
+                                        axis.divideScalar(sinHalfAngle);
                 } else {
-                  axis.normalize();
+                    axis.normalize();
                 }
                 
                 const scaledAngle = angle * controller.userData.gain;
@@ -1052,21 +1057,32 @@ function updateWebXR() {
             }
             
             controller.userData.previousRot.copy(currentRot);
-          } 
-        } else if (mapping === "5") {
-            // 5. VR Gizmo
-            // Update logic for VR Gizmo (drag constraint)
-            if (controller.userData.mode === "gizmo_translate") {
-              const tempMatrix = new THREE.Matrix4();
-              tempMatrix.identity().extractRotation(controller.matrixWorld);
-              const rayOrigin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
-              const rayDir = new THREE.Vector3(0, 0, -1).applyMatrix4(tempMatrix);
-  
-              const currentDragPoint = getClosestPointOnAxis(rayOrigin, rayDir, controller.userData.initialCubePos, controller.userData.axis);
-              const delta = currentDragPoint.clone().sub(controller.userData.initialDragPoint);
-              cube.position.copy(controller.userData.initialCubePos).add(delta);
-            } else if (controller.userData.mode === "gizmo_rotate") {
+        } else if (controller.userData.mode === "gizmo_translate") {
+            const tempMatrix = new THREE.Matrix4();
+            tempMatrix.identity().extractRotation(controller.matrixWorld);
+            const rayOrigin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
+            const rayDir = new THREE.Vector3(0, 0, -1).applyMatrix4(tempMatrix);
 
+            const currentDragPoint = getClosestPointOnAxis(rayOrigin, rayDir, controller.userData.initialCubePos, controller.userData.axis);
+            const delta = currentDragPoint.clone().sub(controller.userData.initialDragPoint);
+            cube.position.copy(controller.userData.initialCubePos).add(delta);
+        } else if (controller.userData.mode === "gizmo_rotate") {
+            const tempMatrix = new THREE.Matrix4();
+            tempMatrix.identity().extractRotation(controller.matrixWorld);
+            const rayOrigin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
+            const rayDir = new THREE.Vector3(0, 0, -1).applyMatrix4(tempMatrix);
+
+            const p = getPlaneIntersection(rayOrigin, rayDir, controller.userData.initialCubePos, controller.userData.axis);
+            if (p) {
+                const v = p.clone().sub(controller.userData.initialCubePos).normalize();
+                const initV = controller.userData.initialDragVector;
+                
+                const cross = new THREE.Vector3().crossVectors(initV, v);
+                const angle = Math.atan2(cross.dot(controller.userData.axis), initV.dot(v));
+                
+                const deltaRot = new THREE.Quaternion().setFromAxisAngle(controller.userData.axis, angle);
+                cube.quaternion.copy(deltaRot.clone().multiply(controller.userData.initialCubeRot));
+                cube.quaternion.normalize();
             }
         }
     });
@@ -1124,7 +1140,7 @@ function animate() {
     const delta = clock.getDelta();
 
     updateControlMapping(delta);
-    updateWebXR();
+    updateWebXR(); // added for VR trackball logic
 
     pathLength += cube.position.distanceTo(lastCubePosition);
     lastCubePosition.copy(cube.position);
