@@ -823,10 +823,62 @@ const gizmoGroup = new THREE.Group();
 const gizmoHits = [];
 
 function buildGizmo() {
-    // Build VR Gizmo
-    // Render per-axis handles, add them to gizmoGroup, and populate gizmoHits for raycasting
+    const createArrow = (color, euler, axisName) => {
+        const group = new THREE.Group();
+        const mat = new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.7 });
+        
+        const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.3, 8), mat);
+        stem.position.y = 0.15;
+        group.add(stem);
+        
+        const head = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.1, 8), mat);
+        head.position.y = 0.35;
+        group.add(head);
+        
+        const hit = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.4, 8), new THREE.MeshBasicMaterial({ visible: false }));
+        hit.position.y = 0.2;
+        group.add(hit);
+        
+        group.quaternion.setFromEuler(euler);
+        hit.userData.type = 'translate';
+        hit.userData.axisName = axisName;
+        hit.userData.axis = new THREE.Vector3(0,1,0).applyEuler(euler).normalize();
+        
+        return { group, hit };
+    };
 
+    const createRing = (color, euler, axisName) => {
+        const group = new THREE.Group();
+        const mat = new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.7, side: THREE.DoubleSide });
+        
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.01, 8, 32), mat);
+        group.add(ring);
+        
+        const hit = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.06, 8, 32), new THREE.MeshBasicMaterial({ visible: false }));
+        group.add(hit);
+        
+        group.quaternion.setFromEuler(euler);
+        hit.userData.type = 'rotate';
+        hit.userData.axisName = axisName;
+        hit.userData.axis = new THREE.Vector3(0,0,1).applyEuler(euler).normalize();
+        
+        return { group, hit };
+    };
+
+    const tX = createArrow(0xff3333, new THREE.Euler(0, 0, -Math.PI/2), 'X');
+    const tY = createArrow(0x33ff33, new THREE.Euler(0, 0, 0), 'Y');
+    const tZ = createArrow(0x3333ff, new THREE.Euler(Math.PI/2, 0, 0), 'Z');
+    
+    const rX = createRing(0xff3333, new THREE.Euler(0, Math.PI/2, 0), 'X');
+    const rY = createRing(0x33ff33, new THREE.Euler(Math.PI/2, 0, 0), 'Y');
+    const rZ = createRing(0x3333ff, new THREE.Euler(0, 0, 0), 'Z');
+    
+    gizmoGroup.add(tX.group, tY.group, tZ.group);
+    gizmoGroup.add(rX.group, rY.group, rZ.group);
+    
+    gizmoHits.push(tX.hit, tY.hit, tZ.hit, rX.hit, rY.hit, rZ.hit);
 }
+
 
 let translateDummy = new THREE.Object3D();
 
@@ -1030,7 +1082,7 @@ function animate() {
     const delta = clock.getDelta();
 
     updateControlMapping(delta);
-    updateWebXR(); // added for VR trackball logic
+    updateWebXR();
 
     pathLength += cube.position.distanceTo(lastCubePosition);
     lastCubePosition.copy(cube.position);
