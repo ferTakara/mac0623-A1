@@ -347,6 +347,33 @@ const confirmBtn = document.getElementById("confirmBtn");
 const downloadBtn = document.getElementById("downloadBtn");
 
 // ---------------------------------------------------------------------------
+// App Mode (Task) State: Manipulation (A1/A2) vs Navigation (A3)
+// ---------------------------------------------------------------------------
+
+export let appMode = "manipulation"; // "manipulation" or "navigation"
+const taskModeSelect = document.getElementById("taskModeSelect");
+const mappingLabel = document.getElementById("mappingLabel");
+const techniqueLabel = document.getElementById("techniqueLabel");
+export const techniqueSelect = document.getElementById("techniqueSelect");
+
+taskModeSelect.addEventListener("change", (e) => {
+    appMode = e.target.value;
+    if (appMode === "navigation") {
+        mappingLabel.style.display = "none";
+        techniqueLabel.style.display = "flex";
+        // Hide manipulation cube and target
+        if (cube) cube.visible = false;
+        if (target) target.visible = false;
+    } else {
+        mappingLabel.style.display = "flex";
+        techniqueLabel.style.display = "none";
+        // Show manipulation cube and target
+        if (cube) cube.visible = true;
+        if (target) target.visible = true;
+    }
+});
+
+// ---------------------------------------------------------------------------
 // Trial state machine — provided, as used in A1
 // ---------------------------------------------------------------------------
 
