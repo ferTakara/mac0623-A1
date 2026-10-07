@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { landmarksData } from './environment.js';
 
 export let beacon;
 export const WAYPOINT_TOLERANCE_RADIUS = 1.0;
@@ -31,8 +32,30 @@ export function buildWaypoint(scene) {
 
 export function spawnNextWaypoint() {
     if (!beacon) return;
-    const x = (Math.random() * BOUNDS * 2) - BOUNDS;
-    const z = (Math.random() * BOUNDS * 2) - BOUNDS;
+    
+    let x, z;
+    let isValid = false;
+    let attempts = 0;
+    
+    // Tenta sortear uma posição válida que não colida com os landmarks
+    while (!isValid && attempts < 50) {
+        x = (Math.random() * BOUNDS * 2) - BOUNDS;
+        z = (Math.random() * BOUNDS * 2) - BOUNDS;
+        
+        isValid = true;
+        for (let lm of landmarksData) {
+            const dx = x - lm.pos[0];
+            const dz = z - lm.pos[2];
+            const dist = Math.sqrt(dx*dx + dz*dz);
+            // Garante que o waypoint fique longe do centro do objeto (raio do objeto + raio do waypoint)
+            if (dist < lm.radius + WAYPOINT_TOLERANCE_RADIUS) {
+                isValid = false;
+                break;
+            }
+        }
+        attempts++;
+    }
+    
     beacon.position.set(x, 2, z);
 }
 
