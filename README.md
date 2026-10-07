@@ -1,4 +1,4 @@
-# A1: Desktop Docking Testbed
+# A1/A2/A3: 3D Interaction Testbed
 
 **Course:** MAC0623 / MAC6923 — 3D Interaction in Mixed Realities (2026)  
 **Author:** Fernando Ramos Takara  
@@ -6,29 +6,46 @@
 
 ## Abstract
 
-This project is a browser-based 3D docking task testbed built using JavaScript and **Three.js**. It evaluates 3D manipulation techniques by comparing five different input mappings for translating and rotating a 3D cube to match a specific target pose (6 Degrees of Freedom). The application logs trial metrics such as completion time, position/orientation error, and mode switches into a downloadable CSV file to support empirical HCI evaluation.
+This project is a browser-based 3D environment built using JavaScript and **Three.js**. It evaluates 3D manipulation and navigation techniques by providing two main tasks:
+1. **Manipulation (A1/A2)**: A 3D docking task to match a cube to a specific target pose (6 Degrees of Freedom).
+2. **Navigation (A3)**: A large-scale wayfinding task testing locomotion techniques across an expansive environment populated with landmarks.
 
-## Mappings
-The application features 5 distinct mapping modes (switchable via the HUD dropdown) that compare desktop and VR techniques side-by-side:
-### Desktop Mappings
-1. **Mouse Based**: The A1 baseline. Translates or rotates the object using standard 2D mouse drags mapped to screen space. Mode is toggled via the `Spacebar` or `Tab`.
-2. **Mouse and Keyboard Based**: The keyboard controls the rotation and thee mouse drag controls the translation of the cube.
-### VR Mappings
-3. **VR Direct Grab (6DoF)**:
-   - Point the controller's ray at the cube and pull the trigger.
-   - The cube attaches rigidly to the controller, inheriting 1:1 translation and rotation (isomorphic).
-4. **VR Trackball**:
-   - **Translation**: Direct grab on the cube (translates the object while ignoring controller rotation).
-   - **Rotation**: Indirect grab on empty space. Dragging applies the controller's rotational delta to the cube.
-   - **Gain Factor**: Utilizes a `2.0` rotational gain factor. This maps a 90-degree wrist twist to a 180-degree tumble on the object, improving ergonomics by preventing "gorilla arm" contortions.
-5. **VR Gizmo**:
-   - A bespoke 6DoF 3D Gizmo featuring 3 translation arrows (X, Y, Z) and 3 rotation rings.
-   - Dragging an arrow mathematically projects the controller's ray to translate the object along standard world axes.
-   - Dragging a ring mathematically intersects the controller's ray with an imaginary plane to smoothly twist the object around a specific axis.
+The application logs trial metrics such as completion time, path length, and errors into a downloadable CSV file to support empirical HCI evaluation.
+
+## Features & Techniques
+
+### Task 1: Manipulation (Docking)
+Features 5 distinct mapping modes (switchable via the HUD dropdown) that compare desktop and VR techniques side-by-side:
+1. **Mouse Based**: Translates or rotates the object using standard 2D mouse drags mapped to screen space. Mode is toggled via the `Spacebar` or `Tab`.
+2. **Mouse and Keyboard Based**: Keyboard controls rotation, mouse drag controls translation.
+3. **VR Direct Grab (6DoF)**: Point and pull trigger. The cube attaches rigidly to the controller, inheriting 1:1 translation and rotation.
+4. **VR Trackball**: 
+   - Translation via direct grab.
+   - Rotation via indirect grab on empty space, utilizing a `2.0` rotational gain factor to improve ergonomics.
+5. **VR Gizmo**: A 6DoF 3D Gizmo featuring 3 translation arrows (X, Y, Z) and 3 rotation rings.
+
+### Task 2: Navigation (Wayfinding)
+Features 2 VR locomotion techniques tested in a 40x40 meter environment:
+1. **World-in-Miniature (WIM)**: 
+   - A miniature board (clipboard style) attached to the left hand.
+   - The user grabs their red avatar pin on the board with their right hand to drag it.
+   - Upon releasing the trigger, the user instantly teleports to the corresponding real-world location.
+2. **Teleport + Ghost (Half-Life: Alyx Style)**: 
+   - The user pushes the thumbstick forward (Joystick Y) to activate aiming.
+   - A Bezier curve and a green "ghost" marker project onto the floor indicating the landing spot.
+   - Releasing the thumbstick instantly teleports the user to the ghost.
+
 ## Code Structure
 - `index.html`: Contains the UI overlay and loads the Three.js scene.
-- `main.js`: Main application logic. Look for the `STUDENT TODO` sections inside `onGrabStart`, `onGrabEnd`, and `updateWebXR` to implement the three VR interaction mappings.
-- `lab10.css`: Styles for the HTML HUD overlay.
+- `css/style.css`: Styles for the HTML HUD overlay.
+- `js/`: Application logic.
+  - `config.js`: Centralized constants and settings.
+  - `main.js`: Main application logic, UI wiring, and WebXR render loop.
+  - `environment.js`: Generation of the large A3 environment and landmarks.
+  - `waypoint.js`: Logic for spawning and validating navigation targets.
+  - `wim.js`: Mini-map rendering and WIM-to-world coordinate transformations.
+  - `teleport.js`: Visuals and Bezier curve math for the joystick teleport.
+- `Assignment-1/` & `Assignment-2/`: Data analysis, Jupyter notebooks, and LaTeX reports.
 
 ## How to Run Locally
 
@@ -38,12 +55,14 @@ This project requires no build tools or bundlers. It uses ES modules and imports
    ```bash
    git clone https://github.com/ferTakara/mac0623-A1.git
    cd mac0623-A1
+   ```
 
-2. Then start a local server from the same folder using
+2. Start a local server:
    ```bash
    python3 -m http.server 8000
+   ```
 
 3. And open the project in the given link
 
 ## Usage
-Select your preferred mapping from the dropdown menu, then click the **Enter VR** button (if using a compatible headset or the WebXR Emulator extension) to interact with the environment when using the 3-5 mappings. Press **Confirm** to log trial data into a downloadable CSV for analysis.
+Select your preferred Mode (Manipulation or Navigation) and Technique from the dropdown menu, then click the **Enter VR** button (if using a compatible headset or the WebXR Emulator extension). For Navigation tasks, use the **Grip** button to confirm when standing inside a waypoint's tolerance radius. Press **Download CSV** to export trial data.
