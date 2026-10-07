@@ -30,77 +30,18 @@ let attachModeSelect, handModeSelect, statusEl;
 // Named constants 
 // ---------------------------------------------------------------------------
 
-// Colors
-const BACKGROUND_COLOR = 0x1a1a1a;
-const HEMISPHERE_SKY_COLOR = 0xffffff;
-const HEMISPHERE_GROUND_COLOR = 0x444444;
-const DIRECTIONAL_LIGHT_COLOR = 0xffffff;
-const GRID_COLOR_CENTER_LINE = 0x444444;
-const GRID_COLOR_LINES = 0x2a2a2a;
-// Cube/target face colors — six distinct colors, one per BoxGeometry face
-// (material order +X -X +Y -Y +Z -Z), so orientation is actually legible
-// instead of a rotationally-symmetric single-color cube. Same convention
-// as the Class 4 station app (labs/c04-ep01 and 02/): +Z is the bright
-// "marked" face.
-const CUBE_FACE_COLORS = [0xffffff, 0xffff33, 0x3388ff, 0x33ff33, 0xff3333, 0xffa500];
-
-// Lighting
-const HEMISPHERE_LIGHT_INTENSITY = 1.2;
-const DIRECTIONAL_LIGHT_INTENSITY = 0.8;
-const DIRECTIONAL_LIGHT_POSITION = [2, 4, 3];
-
-// Scene helpers
-const GRID_SIZE = 6;
-const GRID_DIVISIONS = 24;
-const AXES_HELPER_SIZE = 0.6;
-
-// Geometry
-const CUBE_SIZE = 0.4;  // edge length, BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE)
-const CUBE_INITIAL_POSITION = [0, 0.5, 0];
-const TARGET_OPACITY = 0.35;
-
-// Camera
-const CAMERA_FOV_DEG = 60;
-const CAMERA_NEAR = 0.05;
-const CAMERA_FAR = 100;
-const CAMERA_POSITION = [0, 1.4, 4];
-const CAMERA_LOOK_AT = [0, 0.5, 0];
-
-// Baseline mapping (mouse drag, see below)
-const TRANSLATE_SPEED = 0.0025; // world units per pixel of mouse movement
-const ROTATE_SPEED    = 0.005;  // radians per pixel of mouse movement
-// Mouse drag only covers 2 of the 3 axes each mode needs — right/up while
-// translating, yaw/pitch while rotating. The third axis (depth in translate
-// mode, roll in rotate mode) is on the wheel, same as the Class 4 station
-// app and the A1 baseline this scaffold carries forward.
-const WHEEL_TRANSLATE_SPEED_Z = 0.001; // world units per wheel-delta unit
-const WHEEL_ROTATE_SPEED_Z = 0.002; // radians per wheel-delta unit
-
-// Controller ray — visual feedback for what the controller is pointing at.
-// Without it there's no way to see the raycast getIntersections() casts
-// along, in the emulator or the headset.
-const RAY_LENGTH_SCALE = 1.5;
-const RAY_COLOR = 0xffffff;
-
-// World-space HUD — the DOM #status pill is invisible once an immersive-vr
-// session starts (only what's rendered via renderer.xr composites into the
-// headset view — "DOM Overlay" only applies to immersive-ar, not
-// immersive-vr, so there's no flag that fixes this). Same numbers-on-a-
-// canvas fix as the Class 4 station app, but head-locked rather than
-// world-anchored: the Class 4 station app floats its panel near the ghost
-// (a fixed world point you're looking toward anyway during that task), but
-// this scaffold's target moves every trial and can end up out of view, so
-// the panel is parented to the camera at a fixed local offset instead —
-// it stays in the same spot in your view no matter where you look, rather
-// than being wherever the target happens to be. Hidden outside an XR
-// session — the DOM pill already covers desktop mode.
-const WORLD_HUD_CANVAS_WIDTH = 512;
-const WORLD_HUD_CANVAS_HEIGHT = 160;
-const WORLD_HUD_SPRITE_SCALE = [0.22, 0.069, 1];
-const WORLD_HUD_LOCAL_POSITION = [0.46, 0.32, -0.7]; // camera-local: pushed to the true top-right corner of the FOV (not just off-center) so the cube/target — manipulated near the center of view — doesn't pass behind it on screen
-const AXIS_SWATCH_X = "#" + CUBE_FACE_COLORS[0].toString(16).padStart(6, "0"); // matches the cube's +X face
-const AXIS_SWATCH_Y = "#" + CUBE_FACE_COLORS[2].toString(16).padStart(6, "0"); // matches the cube's +Y face
-const AXIS_SWATCH_Z = "#" + CUBE_FACE_COLORS[4].toString(16).padStart(6, "0"); // matches the cube's +Z face
+import {
+    BACKGROUND_COLOR, HEMISPHERE_SKY_COLOR, HEMISPHERE_GROUND_COLOR,
+    DIRECTIONAL_LIGHT_COLOR, GRID_COLOR_CENTER_LINE, GRID_COLOR_LINES,
+    CUBE_FACE_COLORS, HEMISPHERE_LIGHT_INTENSITY, DIRECTIONAL_LIGHT_INTENSITY,
+    DIRECTIONAL_LIGHT_POSITION, GRID_SIZE, GRID_DIVISIONS, AXES_HELPER_SIZE,
+    CUBE_SIZE, CUBE_INITIAL_POSITION, TARGET_OPACITY, CAMERA_FOV_DEG,
+    CAMERA_NEAR, CAMERA_FAR, CAMERA_POSITION, CAMERA_LOOK_AT,
+    TRANSLATE_SPEED, ROTATE_SPEED, WHEEL_TRANSLATE_SPEED_Z, WHEEL_ROTATE_SPEED_Z,
+    RAY_LENGTH_SCALE, RAY_COLOR, WORLD_HUD_CANVAS_WIDTH, WORLD_HUD_CANVAS_HEIGHT,
+    WORLD_HUD_SPRITE_SCALE, WORLD_HUD_LOCAL_POSITION, AXIS_SWATCH_X,
+    AXIS_SWATCH_Y, AXIS_SWATCH_Z
+} from "./config.js";
 
 // ---------------------------------------------------------------------------
 /**
@@ -226,6 +167,8 @@ function buildWorldHud() {
     return { sprite, canvas, ctx, texture };
 }
 
+import { buildNavigationEnvironment, environmentGroup } from "./environment.js";
+
 // ---------------------------------------------------------------------------
 /**
  * main() — provided. Similar to A1
@@ -237,6 +180,9 @@ function main() {
     target = built.target;
 
     worldHud = buildWorldHud();
+
+    // A3 - Cria o cenário gigante de navegação
+    buildNavigationEnvironment(scene);
 
     camera = new THREE.PerspectiveCamera(
         CAMERA_FOV_DEG,
@@ -364,12 +310,14 @@ taskModeSelect.addEventListener("change", (e) => {
         // Hide manipulation cube and target
         if (cube) cube.visible = false;
         if (target) target.visible = false;
+        if (environmentGroup) environmentGroup.visible = true;
     } else {
         mappingLabel.style.display = "flex";
         techniqueLabel.style.display = "none";
         // Show manipulation cube and target
         if (cube) cube.visible = true;
         if (target) target.visible = true;
+        if (environmentGroup) environmentGroup.visible = false;
     }
 });
 
