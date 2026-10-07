@@ -170,6 +170,7 @@ function buildWorldHud() {
 import { buildNavigationEnvironment, environmentGroup } from "./environment.js";
 import { buildWaypoint, spawnNextWaypoint, checkWaypointTolerance, beacon } from "./waypoint.js";
 import { buildWIM, wimGroup, wimAvatar, updateWimAvatarFromCamera, getWorldPositionFromWimAvatar, applyWimAvatarToRig, WIM_SCALE } from "./wim.js";
+import { buildTeleportVisuals, teleportGroup, teleportMarker, updateTeleportCurve } from "./teleport.js";
 
 export let rig;
 
@@ -188,6 +189,9 @@ function main() {
     // A3 - Cria o cenário gigante de navegação e o alvo (beacon)
     buildNavigationEnvironment(scene);
     buildWaypoint(scene);
+    
+    // A3 - Cria os visuais de teleporte (linha e fantasma)
+    scene.add(buildTeleportVisuals());
 
     rig = new THREE.Group();
     scene.add(rig);
@@ -1006,7 +1010,7 @@ function onGrabStart(event) {
             return;
         }
     }
-
+    
     const mapping = currentMapping();
 
     const tempMatrix = new THREE.Matrix4();
@@ -1115,7 +1119,56 @@ function updateWebXR() {
     }
 
     [controller0, controller1].forEach(controller => {
-        if (!controller || !controller.userData.selected) return;
+        if (!controller) return;
+
+        // Lógica de Teleporte (Half-Life: Alyx) usando o Joystick
+        if (appMode === "navigation" && techniqueSelect.value === "2") {
+            const session = renderer.xr.getSession();
+            let isJoystickPushed = false;
+            
+            if (session) {
+                for (const source of session.inputSources) {
+                    if (source.handedness === controller.userData.handedness && source.gamepad) {
+                        const axes = source.gamepad.axes;
+                        // No padrão WebXR, o eixo Y do analógico (Thumbstick) costuma ser o index 3.
+                        // Valores negativos significam empurrar para a frente (cima).
+                        if (axes.length >= 4 && axes[3] < -0.5) {
+                            isJoystickPushed = true;
+                        }
+                    }
+                }
+            }
+
+            if (isJoystickPushed) {
+                controller.userData.mode = "teleport_aiming";
+                const floor = environmentGroup.children[0];
+                const hits = getIntersections(controller, [floor]);
+                
+                if (hits.length > 0) {
+                    teleportGroup.visible = true;
+                    const hitWorld = hits[0].point.clone();
+                    teleportMarker.position.copy(hitWorld);
+                    
+                    const controllerWorldPos = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
+                    updateTeleportCurve(controllerWorldPos, hitWorld);
+                } else {
+                    teleportGroup.visible = false;
+                }
+                return; // Bloqueia outras interações enquanto mira
+            } else if (controller.userData.mode === "teleport_aiming") {
+                // O jogador SOLTOU o joystick! Executa o teletransporte!
+                if (teleportGroup.visible) {
+                    rig.position.x = teleportMarker.position.x - camera.position.x;
+                    rig.position.z = teleportMarker.position.z - camera.position.z;
+                }
+                teleportGroup.visible = false;
+                controller.userData.mode = null;
+                return;
+            }
+        }
+
+        // Para as outras manipulações, exigimos que o controle tenha pego algo
+        if (!controller.userData.selected) return;
         
         if (controller.userData.mode === "wim_drag") {
             // Interseção apenas com a base (plano) do WIM
@@ -1134,7 +1187,7 @@ function updateWebXR() {
             }
             return;
         }
-        
+
          if (appMode === "manipulation" && mapping === "4") {
           // 4. VR Trackball
           if (controller.userData.mode === "translate") {
