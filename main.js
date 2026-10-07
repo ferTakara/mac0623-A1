@@ -168,6 +168,7 @@ function buildWorldHud() {
 }
 
 import { buildNavigationEnvironment, environmentGroup } from "./environment.js";
+import { buildWaypoint, spawnNextWaypoint, checkWaypointTolerance, beacon } from "./waypoint.js";
 
 // ---------------------------------------------------------------------------
 /**
@@ -181,8 +182,9 @@ function main() {
 
     worldHud = buildWorldHud();
 
-    // A3 - Cria o cenário gigante de navegação
+    // A3 - Cria o cenário gigante de navegação e o alvo (beacon)
     buildNavigationEnvironment(scene);
+    buildWaypoint(scene);
 
     camera = new THREE.PerspectiveCamera(
         CAMERA_FOV_DEG,
@@ -311,6 +313,11 @@ taskModeSelect.addEventListener("change", (e) => {
         if (cube) cube.visible = false;
         if (target) target.visible = false;
         if (environmentGroup) environmentGroup.visible = true;
+        
+        if (beacon) {
+            beacon.visible = true;
+            spawnNextWaypoint();
+        }
     } else {
         mappingLabel.style.display = "flex";
         techniqueLabel.style.display = "none";
@@ -318,6 +325,7 @@ taskModeSelect.addEventListener("change", (e) => {
         if (cube) cube.visible = true;
         if (target) target.visible = true;
         if (environmentGroup) environmentGroup.visible = false;
+        if (beacon) beacon.visible = false;
     }
 });
 
@@ -387,6 +395,21 @@ function startTrial() {
 }
 
 function confirmTrial() {
+    if (appMode === "navigation") {
+        const { distance, withinTolerance } = checkWaypointTolerance(camera);
+        // Em Navigation, só confirma se estiver dentro do raio de tolerância (ao contrário do A1/A2 onde pode errar)
+        if (withinTolerance) {
+            console.log(`Waypoint alcançado! Distância: ${distance.toFixed(2)}`);
+            // TODO: Aqui vamos salvar os dados do A3 no CSV depois
+            
+            spawnNextWaypoint();
+        } else {
+            console.log(`Muito longe do waypoint! Chegue mais perto. (Distância: ${distance.toFixed(2)})`);
+        }
+        return;
+    }
+
+    // Lógica original do A1/A2 (Manipulação)
     const { positionError, orientationErrorDeg } = checkTolerance();
     const completionTimeS = (performance.now() - trialStartTime) / 1000;
     const mapping = currentMapping();
@@ -468,6 +491,31 @@ function axisRotationErrorDeg(axis) {
 }
 
 function updateStatus() {
+    if (appMode === "navigation") {
+        const { distance, withinTolerance } = checkWaypointTolerance(camera);
+        statusEl.textContent = `Distance to Waypoint: ${distance.toFixed(2)}m (Tolerance: <= 1.0m)`;
+        statusEl.classList.toggle("in-tolerance", withinTolerance);
+        
+        // Em VR
+        if (renderer.xr.isPresenting) {
+            worldHud.sprite.visible = true;
+            const { ctx, canvas, texture } = worldHud;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = withinTolerance ? "rgba(30,70,40,0.85)" : "rgba(20,20,26,0.85)";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.textBaseline = "top";
+            ctx.fillStyle = withinTolerance ? "#9f9" : "#eee";
+            ctx.font = "600 34px system-ui, sans-serif";
+            ctx.fillText(`Dist: ${distance.toFixed(2)}m`, 16, 14);
+            ctx.font = "600 30px system-ui, sans-serif";
+            if (withinTolerance) ctx.fillText("PRESS CONFIRM", 16, 76);
+            texture.needsUpdate = true;
+        } else {
+            worldHud.sprite.visible = false;
+        }
+        return;
+    }
+
     const { positionError, orientationErrorDeg, withinTolerance } = checkTolerance();
     const xErr = axisRotationErrorDeg(AXIS_X);
     const yErr = axisRotationErrorDeg(AXIS_Y);
@@ -904,6 +952,9 @@ function setupWebXR() {
     [controller0, controller1].forEach((controller) => {
         controller.addEventListener("selectstart", onGrabStart);
         controller.addEventListener("selectend", onGrabEnd);
+        
+        // A3 - Confirmar o Waypoint pelo VR usando o botão Grip (Squeeze)
+        controller.addEventListener("squeezestart", confirmTrial);
     });
 
     statusEl = document.getElementById("status");

@@ -1,0 +1,55 @@
+import * as THREE from 'three';
+
+export let beacon;
+export const WAYPOINT_TOLERANCE_RADIUS = 1.0;
+const BOUNDS = 16; // Distância máxima em X e Z para sortear o alvo
+
+export function buildWaypoint(scene) {
+    // Pilar brilhante para ser visto de longe
+    const geo = new THREE.CylinderGeometry(0.2, 0.2, 4, 16);
+    const mat = new THREE.MeshStandardMaterial({ 
+        color: 0x00ffff, 
+        transparent: true, 
+        opacity: 0.6,
+        emissive: 0x00ffff,
+        emissiveIntensity: 0.8
+    });
+    beacon = new THREE.Mesh(geo, mat);
+    
+    // Anel no chão demarcando o raio de tolerância (0.75 a 1.5 unidades)
+    const ringGeo = new THREE.RingGeometry(WAYPOINT_TOLERANCE_RADIUS - 0.05, WAYPOINT_TOLERANCE_RADIUS, 32);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0x00ffaa, side: THREE.DoubleSide });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = -1.98; // Quase encostando no chão
+    beacon.add(ring);
+
+    beacon.position.set(0, 2, -5); // Posição inicial
+    beacon.visible = false;
+    scene.add(beacon);
+}
+
+export function spawnNextWaypoint() {
+    if (!beacon) return;
+    const x = (Math.random() * BOUNDS * 2) - BOUNDS;
+    const z = (Math.random() * BOUNDS * 2) - BOUNDS;
+    beacon.position.set(x, 2, z);
+}
+
+export function checkWaypointTolerance(camera) {
+    if (!beacon || !beacon.visible) return { distance: 0, withinTolerance: false };
+    
+    // Pegar posição global da câmera (cabeça do jogador)
+    const camPos = new THREE.Vector3();
+    camera.getWorldPosition(camPos);
+    
+    // Calcula a distância 2D apenas no plano XZ (ignorando a altura Y da cabeça)
+    const dx = camPos.x - beacon.position.x;
+    const dz = camPos.z - beacon.position.z;
+    const distance = Math.sqrt(dx * dx + dz * dz);
+
+    return {
+        distance: distance,
+        withinTolerance: distance <= WAYPOINT_TOLERANCE_RADIUS
+    };
+}
