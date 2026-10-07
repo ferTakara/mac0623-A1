@@ -105,7 +105,7 @@ function buildScene() {
  *
  * @returns {{ controller0, controller1, grip0, grip1 }}
  */
-function buildControllers(renderer, scene) {
+function buildControllers(renderer, targetParent) {
   const rayGeometry = new THREE.BufferGeometry().setFromPoints([
     new THREE.Vector3(0, 0, 0),
     new THREE.Vector3(0, 0, -1),
@@ -120,7 +120,7 @@ function buildControllers(renderer, scene) {
     line.name = "ray";
     line.scale.z = 1.5;
     controller.add(line);
-    scene.add(controller);
+    targetParent.add(controller);
     return controller;
   }
 
@@ -131,7 +131,7 @@ function buildControllers(renderer, scene) {
       new THREE.MeshBasicMaterial({ color: index === 0 ? 0xff6666 : 0x66aaff })
     );
     grip.add(marker);
-    scene.add(grip);
+    targetParent.add(grip);
     return grip;
   }
 
@@ -169,6 +169,9 @@ function buildWorldHud() {
 
 import { buildNavigationEnvironment, environmentGroup } from "./environment.js";
 import { buildWaypoint, spawnNextWaypoint, checkWaypointTolerance, beacon } from "./waypoint.js";
+import { buildWIM, wimGroup, wimAvatar, updateWimAvatarFromCamera, getWorldPositionFromWimAvatar, applyWimAvatarToRig, WIM_SCALE } from "./wim.js";
+
+export let rig;
 
 // ---------------------------------------------------------------------------
 /**
@@ -186,6 +189,9 @@ function main() {
     buildNavigationEnvironment(scene);
     buildWaypoint(scene);
 
+    rig = new THREE.Group();
+    scene.add(rig);
+
     camera = new THREE.PerspectiveCamera(
         CAMERA_FOV_DEG,
         window.innerWidth / window.innerHeight,
@@ -196,12 +202,10 @@ function main() {
     camera.lookAt(...CAMERA_LOOK_AT);
 
     // Head-lock the world HUD: parent it to the camera at a fixed local
-    // offset, then add the camera itself to the scene graph — a camera's
-    // children only render if the camera is reachable from `scene`
-    // (renderer.render() traverses starting at `scene`, not at `camera`).
+    // offset, then add the camera itself to the scene graph
     camera.add(worldHud.sprite);
     worldHud.sprite.position.set(...WORLD_HUD_LOCAL_POSITION);
-    scene.add(camera);
+    rig.add(camera);
 
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(window.devicePixelRatio);
@@ -304,6 +308,18 @@ const mappingLabel = document.getElementById("mappingLabel");
 const techniqueLabel = document.getElementById("techniqueLabel");
 export const techniqueSelect = document.getElementById("techniqueSelect");
 
+function updateNavigationVisibility() {
+    if (appMode === "navigation") {
+        if (techniqueSelect.value === "1") {
+            if (wimGroup) wimGroup.visible = true;
+        } else {
+            if (wimGroup) wimGroup.visible = false;
+        }
+    } else {
+        if (wimGroup) wimGroup.visible = false;
+    }
+}
+
 taskModeSelect.addEventListener("change", (e) => {
     appMode = e.target.value;
     if (appMode === "navigation") {
@@ -316,7 +332,7 @@ taskModeSelect.addEventListener("change", (e) => {
         
         if (beacon) {
             beacon.visible = true;
-            spawnNextWaypoint();
+            if (beacon.position.y === 2 && beacon.position.x === 0 && beacon.position.z === -5) spawnNextWaypoint(); // spawn on first open
         }
     } else {
         mappingLabel.style.display = "flex";
@@ -327,6 +343,11 @@ taskModeSelect.addEventListener("change", (e) => {
         if (environmentGroup) environmentGroup.visible = false;
         if (beacon) beacon.visible = false;
     }
+    updateNavigationVisibility();
+});
+
+techniqueSelect.addEventListener("change", () => {
+    updateNavigationVisibility();
 });
 
 // ---------------------------------------------------------------------------
@@ -939,17 +960,28 @@ function setupWebXR() {
     renderer.xr.enabled = true;
     document.body.appendChild(VRButton.createButton(renderer));
 
-    const ctrls = buildControllers(renderer, scene);
+    const ctrls = buildControllers(renderer, rig);
     controller0 = ctrls.controller0;
     controller1 = ctrls.controller1;
     controllerGrip0 = ctrls.grip0;
     controllerGrip1 = ctrls.grip1;
+
+    // Constrói o WIM (será anexado à mão esquerda assim que o VR conectar)
+    buildWIM();
 
     scene.add(translateDummy);
     buildGizmo();
     scene.add(gizmoGroup);
 
     [controller0, controller1].forEach((controller) => {
+        // Garante que o mapa fique na mão ESQUERDA sempre, e salva a lateralidade
+        controller.addEventListener('connected', (event) => {
+            controller.userData.handedness = event.data.handedness;
+            if (event.data.handedness === 'left') {
+                controller.add(wimGroup);
+            }
+        });
+
         controller.addEventListener("selectstart", onGrabStart);
         controller.addEventListener("selectend", onGrabEnd);
         
@@ -962,6 +994,19 @@ function setupWebXR() {
 
 function onGrabStart(event) {
     const controller = event.target;
+    
+    // Se estivermos em navegação e a técnica for WIM (1) e for a mão DIREITA
+    if (appMode === "navigation" && techniqueSelect.value === "1" && controller.userData.handedness === "right") {
+        // Usa o hitbox invisível do avatar para facilitar agarrar
+        const avatarHitbox = wimAvatar.children[0]; 
+        const hits = getIntersections(controller, [avatarHitbox]);
+        if (hits.length > 0) {
+            controller.userData.mode = "wim_drag";
+            controller.userData.selected = wimAvatar;
+            return;
+        }
+    }
+
     const mapping = currentMapping();
 
     const tempMatrix = new THREE.Matrix4();
@@ -969,7 +1014,7 @@ function onGrabStart(event) {
     const rayOrigin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
     const rayDir = new THREE.Vector3(0, 0, -1).applyMatrix4(tempMatrix);
 
-    if (mapping === "3") {
+    if (appMode === "manipulation" && mapping === "3") {
         // 3. VR Direct Grab (6DoF)
         const hits = getIntersections(controller, [cube]);
         if (hits.length > 0) {
@@ -1031,6 +1076,14 @@ function onGrabStart(event) {
 function onGrabEnd(event) {
     const controller = event.target;
     if (!controller.userData.selected) return;
+    
+    if (controller.userData.mode === "wim_drag") {
+        applyWimAvatarToRig(rig, camera);
+        controller.userData.mode = null;
+        controller.userData.selected = null;
+        return;
+    }
+    
     const mapping = currentMapping();
     
     if (mapping === "3") {
@@ -1064,7 +1117,25 @@ function updateWebXR() {
     [controller0, controller1].forEach(controller => {
         if (!controller || !controller.userData.selected) return;
         
-         if (mapping === "4") {
+        if (controller.userData.mode === "wim_drag") {
+            // Interseção apenas com a base (plano) do WIM
+            const board = wimGroup.children[1];
+            const hits = getIntersections(controller, [board]);
+            if (hits.length > 0) {
+                const hitWorld = hits[0].point.clone();
+                const hitPointLocal = wimGroup.worldToLocal(hitWorld);
+                
+                // Limita para que o avatar não saia da borda do mapa (20x20 * escala)
+                const limit = 20 * WIM_SCALE; 
+                wimAvatar.position.x = THREE.MathUtils.clamp(hitPointLocal.x, -limit, limit);
+                wimAvatar.position.z = THREE.MathUtils.clamp(hitPointLocal.z, -limit, limit);
+                
+                // Agora SÓ transladamos o boneco visualmente! O teletransporte real ocorre no onGrabEnd()
+            }
+            return;
+        }
+        
+         if (appMode === "manipulation" && mapping === "4") {
           // 4. VR Trackball
           if (controller.userData.mode === "translate") {
             let dummyWorldPos = new THREE.Vector3();
@@ -1183,6 +1254,13 @@ function animate() {
 
     updateControlMapping(delta);
     updateWebXR();
+
+    // Se estiver usando WIM, e o usuário NÃO estiver arrastando o avatar agora
+    if (appMode === "navigation" && techniqueSelect.value === "1") {
+        if (!(controller0.userData.mode === "wim_drag" || controller1.userData.mode === "wim_drag")) {
+            updateWimAvatarFromCamera(camera);
+        }
+    }
 
     pathLength += cube.position.distanceTo(lastCubePosition);
     lastCubePosition.copy(cube.position);
