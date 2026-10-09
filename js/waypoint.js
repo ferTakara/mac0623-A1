@@ -1,9 +1,9 @@
 import * as THREE from 'three';
-import { landmarksData } from './environment.js';
+import { landmarksData, wallsData } from './environment.js';
 
 export let beacon;
 export const WAYPOINT_TOLERANCE_RADIUS = 1.0;
-const BOUNDS = 16; // Distância máxima em X e Z para sortear o alvo
+const BOUNDS = 18; // Ampliado para aproveitar melhor os cantos das salas
 
 export function buildWaypoint(scene) {
     // Pilar brilhante para ser visto de longe
@@ -37,22 +37,44 @@ export function spawnNextWaypoint() {
     let isValid = false;
     let attempts = 0;
     
-    // Tenta sortear uma posição válida que não colida com os landmarks
-    while (!isValid && attempts < 50) {
+    // Tenta sortear uma posição válida que não colida com landmarks e paredes
+    while (!isValid && attempts < 100) {
         x = (Math.random() * BOUNDS * 2) - BOUNDS;
         z = (Math.random() * BOUNDS * 2) - BOUNDS;
         
         isValid = true;
+        
+        // 1. Checagem contra os Landmarks
         for (let lm of landmarksData) {
             const dx = x - lm.pos[0];
             const dz = z - lm.pos[2];
             const dist = Math.sqrt(dx*dx + dz*dz);
-            // Garante que o waypoint fique longe do centro do objeto (raio do objeto + raio do waypoint)
             if (dist < lm.radius + WAYPOINT_TOLERANCE_RADIUS) {
                 isValid = false;
                 break;
             }
         }
+
+        // 2. Checagem contra as Paredes (AABB)
+        if (isValid) {
+            for (let w of wallsData) {
+                // Dimensões da parede (comprimento / 2)
+                const halfX = w.size[0] / 2;
+                const halfZ = w.size[2] / 2;
+                
+                // Limites da parede + tolerância
+                const minX = w.pos[0] - halfX - WAYPOINT_TOLERANCE_RADIUS;
+                const maxX = w.pos[0] + halfX + WAYPOINT_TOLERANCE_RADIUS;
+                const minZ = w.pos[2] - halfZ - WAYPOINT_TOLERANCE_RADIUS;
+                const maxZ = w.pos[2] + halfZ + WAYPOINT_TOLERANCE_RADIUS;
+                
+                if (x > minX && x < maxX && z > minZ && z < maxZ) {
+                    isValid = false;
+                    break;
+                }
+            }
+        }
+        
         attempts++;
     }
     

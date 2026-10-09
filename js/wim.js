@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { landmarksData } from './environment.js';
+import { landmarksData, wallsData } from './environment.js';
 import { beacon } from './waypoint.js';
 
 export let wimGroup;
@@ -44,6 +44,16 @@ export function buildWIM() {
         
         // Posição local relativa à base do WIM
         mesh.position.set(lm.pos[0] * WIM_SCALE, (lm.pos[1] * WIM_SCALE) + 0.1, (lm.pos[2] * WIM_SCALE) - 0.2);
+        wimGroup.add(mesh);
+    });
+
+    // Miniaturas das Paredes
+    wallsData.forEach(w => {
+        const geo = new THREE.BoxGeometry(w.size[0]*WIM_SCALE, w.size[1]*WIM_SCALE, w.size[2]*WIM_SCALE);
+        const mat = new THREE.MeshStandardMaterial({ color: w.color, roughness: 0.8 });
+        const mesh = new THREE.Mesh(geo, mat);
+        
+        mesh.position.set(w.pos[0] * WIM_SCALE, (w.pos[1] * WIM_SCALE) + 0.1, (w.pos[2] * WIM_SCALE) - 0.2);
         wimGroup.add(mesh);
     });
 
