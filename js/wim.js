@@ -24,11 +24,12 @@ export function buildWIM() {
     // Eleva um pouco para não ficar exatamente no centro do controle
     board.position.set(0, 0.1, -0.2); 
     
-    // Adicionar um contorno/borda para ficar bonito
+    // Adicionar um contorno/borda para ficar bonito (Box sólido por baixo do plano)
     const edgeGeo = new THREE.BoxGeometry(boardSize + 0.02, 0.02, boardSize + 0.02);
     const edgeMat = new THREE.MeshBasicMaterial({ color: 0x555555 });
     const edge = new THREE.Mesh(edgeGeo, edgeMat);
-    edge.position.set(0, 0.09, -0.2);
+    // Move para 0.08 para que a face superior fique em y=0.09, evitando Z-fighting com o plano em y=0.1
+    edge.position.set(0, 0.08, -0.2);
     wimGroup.add(edge);
     wimGroup.add(board);
 
