@@ -530,9 +530,9 @@ function updateStatus() {
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             ctx.textBaseline = "top";
             ctx.fillStyle = withinTolerance ? "#9f9" : "#eee";
-            ctx.font = "600 34px system-ui, sans-serif";
+            ctx.font = "600 44px system-ui, sans-serif";
             ctx.fillText(`Dist: ${distance.toFixed(2)}m`, 16, 14);
-            ctx.font = "600 30px system-ui, sans-serif";
+            ctx.font = "600 40px system-ui, sans-serif";
             if (withinTolerance) ctx.fillText("PRESS CONFIRM", 16, 76);
             texture.needsUpdate = true;
         } else {
@@ -1178,10 +1178,11 @@ function updateWebXR() {
                 const hitWorld = hits[0].point.clone();
                 const hitPointLocal = wimGroup.worldToLocal(hitWorld);
                 
-                // Limita para que o avatar não saia da borda do mapa (20x20 * escala)
-                const limit = 20 * WIM_SCALE; 
-                wimAvatar.position.x = THREE.MathUtils.clamp(hitPointLocal.x, -limit, limit);
-                wimAvatar.position.z = THREE.MathUtils.clamp(hitPointLocal.z, -limit, limit);
+                // Como o raycast já garante que o hit foi no tabuleiro,
+                // não precisamos (e nem devemos) clambar manualmente, pois o tabuleiro 
+                // tem um offset (z = -0.2) que estava estragando o clamp.
+                wimAvatar.position.x = hitPointLocal.x;
+                wimAvatar.position.z = hitPointLocal.z;
                 
                 // Agora SÓ transladamos o boneco visualmente! O teletransporte real ocorre no onGrabEnd()
             }

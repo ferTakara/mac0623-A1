@@ -34,8 +34,8 @@ export const RAY_COLOR = 0xffffff;
 
 export const WORLD_HUD_CANVAS_WIDTH = 512;
 export const WORLD_HUD_CANVAS_HEIGHT = 160;
-export const WORLD_HUD_SPRITE_SCALE = [0.22, 0.069, 1];
-export const WORLD_HUD_LOCAL_POSITION = [0, 0.25, -0.7];
+export const WORLD_HUD_SPRITE_SCALE = [0.33, 0.10, 1]; // 1.5x maior para ficar mais legível
+export const WORLD_HUD_LOCAL_POSITION = [0, -0.15, -0.6]; // Colocado mais perto (-0.6) e um pouco para baixo (-0.15) no centro
 export const AXIS_SWATCH_X = "#" + CUBE_FACE_COLORS[0].toString(16).padStart(6, "0");
 export const AXIS_SWATCH_Y = "#" + CUBE_FACE_COLORS[2].toString(16).padStart(6, "0");
 export const AXIS_SWATCH_Z = "#" + CUBE_FACE_COLORS[4].toString(16).padStart(6, "0");
