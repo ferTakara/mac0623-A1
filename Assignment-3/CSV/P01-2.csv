@@ -1,0 +1,4 @@
+participant_id,mapping,trial_number,presentation_order,completion_time_s,final_distance
+P01,2,1,1,13.83,0.60
+P01,2,2,1,5.77,0.62
+P01,2,3,1,4.60,0.40
