@@ -21,8 +21,9 @@ export const COLORS = [
 export const STATE_DETECTING_SURFACE = 0;
 export const STATE_SELECTING_OBJECT  = 1; 
 export const STATE_MANIPULATING      = 2;
+export const STATE_FINISHED          = 3;
 
-// Cabeçalho dos 9 campos obrigatórios do CSV
+// Cabeçalho dos campos do CSV (9 métricas + arm_fatigue)
 export const CSV_HEADER = [
     'participant_id',
     'technique',
@@ -33,6 +34,7 @@ export const CSV_HEADER = [
     'wrong_selections',
     'touch_count',
     'tracking_lost',
+    'arm_fatigue'
 ];
 
 // ===========================================================================
@@ -80,6 +82,8 @@ const csvRows = [];
 // ===========================================================================
 // 3. REFERÊNCIAS A ELEMENTOS DO DOM (HUD / OVERLAY)
 // ===========================================================================
+const hudEl = document.getElementById("hud");
+const helpEl = document.getElementById("help");
 const participantIdInput = document.getElementById("participantId");
 const mappingSelect = document.getElementById("mappingSelect");
 const trialCountEl = document.getElementById("trialCount");
@@ -88,6 +92,8 @@ const downloadBtn = document.getElementById("downloadBtn");
 const reconfigBtn = document.getElementById("reconfigBtn");
 const startActivityBtn = document.getElementById("startActivityBtn");
 const statusEl = document.getElementById("status");
+const fatigueModal = document.getElementById("fatigueModal");
+const fatigueButtons = document.getElementById("fatigueButtons");
 
 
 // ===========================================================================
@@ -118,6 +124,12 @@ export function init() {
 
     // 4.5 Configuração do Botão WebXR (ARButton com dom-overlay e hit-test)
     const overlayRoot = document.getElementById('ar-overlay') || document.body;
+
+    // Previne que toques no DOM Overlay disparem eventos select duplicados no WebXR controller
+    overlayRoot.addEventListener('beforexrselect', (e) => {
+        e.preventDefault();
+    });
+
     const sessionInit = {
         requiredFeatures: ['hit-test'],
         optionalFeatures: ['dom-overlay'],
@@ -173,7 +185,16 @@ export function updatePointer(clientX, clientY) {
 export function lockWorkspace() {
     workspaceLocked = true;
     if (startActivityBtn) startActivityBtn.classList.add('hidden');
+    if (helpEl) helpEl.classList.add('hidden');
+    if (hudEl) hudEl.classList.add('activity-active');
+    if (participantIdInput) participantIdInput.disabled = true;
     if (reticle) reticle.visible = false;
+
+    // Zera contadores ao começar a atividade
+    touchCount = 0;
+    trackingLostCount = 0;
+    wrongSelections = 0;
+
     appState = STATE_SELECTING_OBJECT;
     if (targetColorIndex !== undefined && COLORS[targetColorIndex]) {
         updateStatus(`Alvo: ${COLORS[targetColorIndex].name} | Selecione o cubo correspondente`);
@@ -249,7 +270,16 @@ async function onSessionStart() {
     workspaceLocked = false;
     appState = STATE_DETECTING_SURFACE;
     if (startActivityBtn) {
-        startActivityBtn.classList.remove('hidden');
+        startActivityBtn.classList.add('hidden'); // Permanece oculto até posicionar a mesa
+    }
+    if (helpEl) {
+        helpEl.classList.remove('hidden');
+    }
+    if (hudEl) {
+        hudEl.classList.remove('activity-active');
+    }
+    if (participantIdInput) {
+        participantIdInput.disabled = false;
     }
     updateStatus("Escaneando...");
 }
@@ -259,6 +289,8 @@ function onSessionEnd() {
     hitTestSourceRequested = false;
     workspaceLocked = false;
     if (reticle) reticle.visible = false;
+    if (hudEl) hudEl.classList.remove('activity-active');
+    if (participantIdInput) participantIdInput.disabled = false;
     updateStatus("—");
 }
 
@@ -279,6 +311,16 @@ function setupReticle() {
     reticle.add(centerDot);
 
     scene.add(reticle);
+}
+
+// Algoritmo de embaralhamento uniforme Fisher-Yates
+export function shuffle(array) {
+    const arr = [...array];
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
 }
 
 // ===========================================================================
@@ -390,8 +432,8 @@ export function placeWorkspace(position) {
         toCamera.normalize();
     }
 
-    // Embaralha as posições das cores
-    const shuffledIndices = [0, 1, 2].sort(() => Math.random() - 0.5);
+    // Embaralha as posições das cores usando Fisher-Yates uniforme
+    const shuffledIndices = shuffle([0, 1, 2]);
     const arcAngles = [-0.55, 0, 0.55]; // Disposição em arco (~ -32°, 0°, +32°)
     const distance = 0.38; // 38 cm (dentro do intervalo de 30 a 50 cm)
 
@@ -570,11 +612,15 @@ function setupTouchGestures() {
 }
 
 function onTouchStart(event) {
-    if (event.target.closest('#hud') || event.target.closest('button') || event.target.closest('select') || event.target.closest('input')) {
+    if (event.target.closest('#hud') || event.target.closest('button') || event.target.closest('select') || event.target.closest('input') || event.target.closest('#fatigueModal')) {
         return;
     }
     event.preventDefault();
-    touchCount++;
+
+    // Incrementa touchCount apenas durante a execução da tarefa (seleção e manipulação)
+    if (appState === STATE_SELECTING_OBJECT || appState === STATE_MANIPULATING) {
+        touchCount++;
+    }
 
     if (event.touches.length === 1) {
         const touch = event.touches[0];
@@ -694,6 +740,8 @@ export function checkDockingTolerance() {
 }
 
 export function confirmTrial() {
+    if (appState === STATE_FINISHED) return;
+
     if (appState !== STATE_MANIPULATING) {
         updateStatus("Selecione primeiro o cubo correspondente!");
         return;
@@ -702,7 +750,6 @@ export function confirmTrial() {
     const { posErrorCm, yawErrorDeg } = checkDockingTolerance();
     const completionTimeS = trialStartTime > 0 ? (performance.now() - trialStartTime) / 1000 : 0;
     const participantId = participantIdInput ? participantIdInput.value.trim() : "P01";
-
     const currentTechnique = (mappingSelect && mappingSelect.value === "2") ? "technique2" : "touch";
 
     // Registra métricas da tentativa
@@ -715,7 +762,8 @@ export function confirmTrial() {
         yaw_error_deg: parseFloat(yawErrorDeg.toFixed(1)),
         wrong_selections: wrongSelections,
         touch_count: touchCount,
-        tracking_lost: trackingLostCount
+        tracking_lost: trackingLostCount,
+        arm_fatigue: lastArmFatigue ?? ""
     });
 
     if (currentTrial < 3) {
@@ -739,11 +787,29 @@ export function confirmTrial() {
         appState = STATE_SELECTING_OBJECT;
         updateStatus(`Trial ${currentTrial}: Alvo ${COLORS[targetColorIndex].name} | Selecione o cubo`);
     } else {
-        updateStatus("3 trials concluídos! Baixe o CSV.");
-        const fatigue = prompt("Fim da Técnica 1! Quão cansados estão seus braços? (Escala de 1 a 5):", "1");
-        if (fatigue) lastArmFatigue = fatigue;
-        alert("3 trials da Técnica 1 finalizados com sucesso! Clique em 'Download CSV' para baixar seus dados.");
+        appState = STATE_FINISHED;
+        if (hudEl) hudEl.classList.remove('activity-active');
+        if (confirmBtn) confirmBtn.style.display = 'none';
+        updateStatus("3 trials concluídos! Avalie a fadiga.");
+        showFatigueModal();
     }
+}
+
+export function showFatigueModal() {
+    if (fatigueModal) {
+        fatigueModal.classList.remove('hidden');
+    }
+}
+
+export function handleFatigueRating(rating) {
+    lastArmFatigue = parseInt(rating, 10);
+    // Aplica a nota de fadiga a todas as linhas do participante
+    csvRows.forEach(row => {
+        row.arm_fatigue = lastArmFatigue;
+    });
+
+    if (fatigueModal) fatigueModal.classList.add('hidden');
+    updateStatus("Fadiga registrada! Baixe o CSV.");
 }
 
 // ===========================================================================
@@ -771,6 +837,15 @@ function setupEventListeners() {
         appState = STATE_DETECTING_SURFACE;
         if (startActivityBtn) {
             startActivityBtn.classList.remove('hidden');
+        }
+        if (helpEl) {
+            helpEl.classList.remove('hidden');
+        }
+        if (hudEl) {
+            hudEl.classList.remove('activity-active');
+        }
+        if (participantIdInput) {
+            participantIdInput.disabled = false;
         }
         const pos = (reticle && reticle.visible) ?
             new THREE.Vector3().setFromMatrixPosition(reticle.matrix) :
@@ -805,6 +880,19 @@ function setupEventListeners() {
     if (downloadBtn) {
         downloadBtn.addEventListener('click', handleDownload);
         downloadBtn.addEventListener('touchend', handleDownload);
+    }
+
+    if (fatigueButtons) {
+        fatigueButtons.querySelectorAll('button').forEach(btn => {
+            const onRating = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const rating = btn.getAttribute('data-rating');
+                handleFatigueRating(rating);
+            };
+            btn.addEventListener('click', onRating);
+            btn.addEventListener('touchend', onRating);
+        });
     }
 
     window.addEventListener('keydown', (event) => {
@@ -857,6 +945,23 @@ function render(timestamp, frame) {
         const referenceSpace = renderer.xr.getReferenceSpace();
         const session = renderer.xr.getSession();
 
+        // 1. Monitoramento do rastreamento do dispositivo via getViewerPose
+        const viewerPose = frame.getViewerPose(referenceSpace);
+        const trackingOk = Boolean(viewerPose && !viewerPose.emulatedPosition);
+
+        // Contabiliza tracking_lost apenas durante a execução da tarefa
+        if (appState === STATE_SELECTING_OBJECT || appState === STATE_MANIPULATING) {
+            if (!trackingOk && lastTrackingState) {
+                trackingLostCount++;
+                lastTrackingState = false;
+            } else if (trackingOk && !lastTrackingState) {
+                lastTrackingState = true;
+            }
+        } else {
+            lastTrackingState = trackingOk;
+        }
+
+        // 2. Hit-test para posicionamento da mesa
         if (hitTestSourceRequested === false) {
             session.requestReferenceSpace('viewer').then(function (referenceSpace) {
                 session.requestHitTestSource({ space: referenceSpace }).then(function (source) {
@@ -874,7 +979,7 @@ function render(timestamp, frame) {
             hitTestSourceRequested = true;
         }
 
-        if (hitTestSource) {
+        if (!workspaceLocked && hitTestSource) {
             const hitTestResults = frame.getHitTestResults(hitTestSource);
 
             if (hitTestResults.length > 0) {
@@ -882,36 +987,24 @@ function render(timestamp, frame) {
                 const pose = hit.getPose(referenceSpace);
 
                 if (pose) {
-                    lastTrackingState = true;
-                    if (!workspaceLocked && reticle) {
+                    if (reticle) {
                         reticle.visible = true;
                         reticle.matrix.fromArray(pose.transform.matrix);
-                        if (appState === STATE_DETECTING_SURFACE) {
-                            updateStatus("Superfície detectada");
-                        }
-                    } else if (reticle) {
-                        reticle.visible = false;
                     }
-                } else {
-                    if (reticle) reticle.visible = false;
-                    if (lastTrackingState) {
-                        trackingLostCount++;
-                        lastTrackingState = false;
+                    if (appState === STATE_DETECTING_SURFACE) {
+                        updateStatus("Superfície detectada");
                     }
-                    if (appState === STATE_DETECTING_SURFACE && !workspaceLocked) {
-                        updateStatus("Rastreamento instável");
-                    }
+                } else if (reticle) {
+                    reticle.visible = false;
                 }
             } else {
                 if (reticle) reticle.visible = false;
-                if (lastTrackingState) {
-                    trackingLostCount++;
-                    lastTrackingState = false;
-                }
-                if (appState === STATE_DETECTING_SURFACE && !workspaceLocked) {
+                if (appState === STATE_DETECTING_SURFACE) {
                     updateStatus("Escaneando...");
                 }
             }
+        } else if (reticle) {
+            reticle.visible = false;
         }
     }
 
