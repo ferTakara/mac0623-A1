@@ -147,22 +147,89 @@ export function init() {
     renderer.setAnimationLoop(render);
 }
 
+export function getActiveCamera() {
+    if (renderer && renderer.xr && renderer.xr.isPresenting) {
+        const xrCamera = renderer.xr.getCamera();
+        if (xrCamera && xrCamera.cameras && xrCamera.cameras.length > 0) {
+            return xrCamera.cameras[0];
+        }
+    }
+    return camera;
+}
+
+export function updatePointer(clientX, clientY) {
+    if (renderer && renderer.domElement) {
+        const rect = renderer.domElement.getBoundingClientRect();
+        const width = rect.width || window.innerWidth;
+        const height = rect.height || window.innerHeight;
+        pointer.x = ((clientX - rect.left) / width) * 2 - 1;
+        pointer.y = -((clientY - rect.top) / height) * 2 + 1;
+    } else {
+        pointer.x = (clientX / window.innerWidth) * 2 - 1;
+        pointer.y = -(clientY / window.innerHeight) * 2 + 1;
+    }
+}
+
+export function lockWorkspace() {
+    workspaceLocked = true;
+    if (startActivityBtn) startActivityBtn.classList.add('hidden');
+    if (reticle) reticle.visible = false;
+    appState = STATE_SELECTING_OBJECT;
+    if (targetColorIndex !== undefined && COLORS[targetColorIndex]) {
+        updateStatus(`Alvo: ${COLORS[targetColorIndex].name} | Selecione o cubo correspondente`);
+    }
+}
+
 function onSelect() {
-    // Se o workplace já foi travado com "Começar atividade?", impede mover os objetos
-    if (workspaceLocked) return;
+    // Se o workplace não está travado, permite mover a mesa ou selecionar o cubo diretamente
+    if (!workspaceLocked) {
+        if (reticle && reticle.visible) {
+            const pos = new THREE.Vector3();
+            const quat = new THREE.Quaternion();
+            const scale = new THREE.Vector3();
+            reticle.matrix.decompose(pos, quat, scale);
+            placeWorkspace(pos);
+            if (startActivityBtn) {
+                startActivityBtn.classList.remove('hidden');
+            }
+        }
+        return;
+    }
 
-    if (reticle && reticle.visible) {
-        const pos = new THREE.Vector3();
-        const quat = new THREE.Quaternion();
-        const scale = new THREE.Vector3();
-        reticle.matrix.decompose(pos, quat, scale);
+    // Se workspace já está travado e estamos aguardando seleção:
+    if (appState === STATE_SELECTING_OBJECT && controller) {
+        const tempMatrix = new THREE.Matrix4();
+        tempMatrix.identity().extractRotation(controller.matrixWorld);
+        raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+        raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
 
-        // Ancara a área de trabalho completa na superfície real detectada
-        placeWorkspace(pos);
+        let pickedCube = null;
+        const meshes = [];
+        candidateObjects.forEach(cube => {
+            cube.traverse(child => {
+                if (child.isMesh) {
+                    child.userData.parentCube = cube;
+                    meshes.push(child);
+                }
+            });
+        });
 
-        // Exibe o botão para o usuário poder travar e iniciar a atividade
-        if (startActivityBtn) {
-            startActivityBtn.classList.remove('hidden');
+        const intersects = raycaster.intersectObjects(meshes, false);
+        if (intersects.length > 0) {
+            pickedCube = intersects[0].object.userData.parentCube;
+        } else {
+            let minDistance = 0.10;
+            candidateObjects.forEach(cube => {
+                const dist = raycaster.ray.distanceToPoint(cube.position);
+                if (dist < minDistance) {
+                    minDistance = dist;
+                    pickedCube = cube;
+                }
+            });
+        }
+
+        if (pickedCube) {
+            selectCube(pickedCube);
         }
     }
 }
@@ -232,6 +299,19 @@ export function createDockingCube(colorHex = 0x007aff, isGhost = false) {
     });
     const cubeMesh = new THREE.Mesh(boxGeo, boxMat);
     group.add(cubeMesh);
+
+    // Hit-box invisível expandida (10.5 cm) para facilitar o toque na tela do smartphone
+    if (!isGhost) {
+        const hitBoxGeo = new THREE.BoxGeometry(CUBE_SIZE * 1.5, CUBE_SIZE * 1.5, CUBE_SIZE * 1.5);
+        const hitBoxMat = new THREE.MeshBasicMaterial({
+            transparent: true,
+            opacity: 0,
+            depthWrite: false
+        });
+        const hitBox = new THREE.Mesh(hitBoxGeo, hitBoxMat);
+        hitBox.name = "touchHitBox";
+        group.add(hitBox);
+    }
 
     // Contorno (edges) de alto contraste
     const edgeGeo = new THREE.EdgesGeometry(boxGeo);
@@ -361,7 +441,7 @@ function applySelectionHighlight(group) {
     if (oldHighlight) group.remove(oldHighlight);
 
     // Anel luminoso ao redor da base do cubo sobre o plano da mesa
-    const ringGeo = new THREE.RingGeometry(CUBE_SIZE * 0.65, CUBE_SIZE * 0.85, 32);
+    const ringGeo = new THREE.RingGeometry(CUBE_SIZE * 0.65, CUBE_SIZE * 0.95, 32);
     ringGeo.rotateX(-Math.PI / 2);
     const ringMat = new THREE.MeshBasicMaterial({
         color: 0xffcc00, // Dourado de seleção
@@ -372,19 +452,69 @@ function applySelectionHighlight(group) {
     ring.position.set(0, -CUBE_SIZE / 2 + 0.002, 0);
     group.add(ring);
 
-    // Destaque emissivo sutil nas faces do cubo
-    const cubeMesh = group.children[0];
-    if (cubeMesh && cubeMesh.material) {
-        cubeMesh.material.emissive = new THREE.Color(0x333333);
+    // Destaque emissivo nas faces do cubo
+    group.traverse(child => {
+        if (child.isMesh && child.name !== "touchHitBox" && child.material && child.material.emissive) {
+            child.material.emissive = new THREE.Color(0x333333);
+        }
+    });
+}
+
+export function selectCube(cube) {
+    if (!cube) return false;
+
+    if (cube.userData.isTarget) {
+        // Seleção CORRETA
+        selectedObject = cube;
+        applySelectionHighlight(selectedObject);
+
+        // Feedback tátil de sucesso no celular
+        if (navigator.vibrate) navigator.vibrate([40, 40, 40]);
+
+        // Oculta/remove os outros 2 cubos candidatos (Class 15)
+        candidateObjects.forEach(c => {
+            if (c !== selectedObject) {
+                scene.remove(c);
+            }
+        });
+
+        trialStartTime = performance.now();
+        appState = STATE_MANIPULATING;
+
+        // Prepara arrasto imediato se o usuário mantiver o dedo na tela
+        if (tabletopPlane) {
+            const hitPoint = new THREE.Vector3();
+            if (raycaster.ray.intersectPlane(tabletopPlane, hitPoint)) {
+                dragOffset.set(
+                    hitPoint.x - selectedObject.position.x,
+                    0,
+                    hitPoint.z - selectedObject.position.z
+                );
+                isDragging = true;
+            }
+        }
+
+        checkDockingTolerance();
+        return true;
+    } else {
+        // Seleção INCORRETA
+        wrongSelections++;
+        if (navigator.vibrate) navigator.vibrate(120);
+
+        updateStatus("Cubo incorreto! Escolha a cor do alvo.");
+        setTimeout(() => {
+            if (appState === STATE_SELECTING_OBJECT && targetColorIndex !== undefined && COLORS[targetColorIndex]) {
+                updateStatus(`Alvo: ${COLORS[targetColorIndex].name} | Selecione o cubo`);
+            }
+        }, 1200);
+        return false;
     }
 }
 
 export function handleObjectSelection(clientX, clientY) {
-    if (appState !== STATE_SELECTING_OBJECT) return false;
-
-    pointer.x = (clientX / window.innerWidth) * 2 - 1;
-    pointer.y = -(clientY / window.innerHeight) * 2 + 1;
-    raycaster.setFromCamera(pointer, camera);
+    updatePointer(clientX, clientY);
+    const activeCamera = getActiveCamera();
+    raycaster.setFromCamera(pointer, activeCamera);
 
     const meshes = [];
     candidateObjects.forEach(cube => {
@@ -396,56 +526,27 @@ export function handleObjectSelection(clientX, clientY) {
         });
     });
 
+    let pickedCube = null;
     const intersects = raycaster.intersectObjects(meshes, false);
     if (intersects.length > 0) {
-        const hitMesh = intersects[0].object;
-        const clickedCube = hitMesh.userData.parentCube;
-
-        if (clickedCube) {
-            if (clickedCube.userData.isTarget) {
-                // Seleção CORRETA
-                selectedObject = clickedCube;
-                applySelectionHighlight(selectedObject);
-
-                // Oculta/remove os outros 2 cubos candidatos (Class 15)
-                candidateObjects.forEach(cube => {
-                    if (cube !== selectedObject) {
-                        scene.remove(cube);
-                    }
-                });
-
-                trialStartTime = performance.now();
-                appState = STATE_MANIPULATING;
-
-                // Prepara arrasto imediato se o usuário mantiver o dedo na tela
-                if (tabletopPlane) {
-                    const hitPoint = new THREE.Vector3();
-                    if (raycaster.ray.intersectPlane(tabletopPlane, hitPoint)) {
-                        dragOffset.set(
-                            hitPoint.x - selectedObject.position.x,
-                            0,
-                            hitPoint.z - selectedObject.position.z
-                        );
-                        isDragging = true;
-                    }
-                }
-
-                checkDockingTolerance();
-                return true;
-            } else {
-                // Seleção INCORRETA
-                wrongSelections++;
-                if (navigator.vibrate) navigator.vibrate(120);
-
-                updateStatus("Cubo incorreto! Escolha a cor do alvo.");
-                setTimeout(() => {
-                    if (appState === STATE_SELECTING_OBJECT && targetColorIndex !== undefined && COLORS[targetColorIndex]) {
-                        updateStatus(`Alvo: ${COLORS[targetColorIndex].name} | Selecione o cubo`);
-                    }
-                }, 1200);
-                return false;
+        pickedCube = intersects[0].object.userData.parentCube;
+    } else {
+        // Tolerância de proximidade para toques em telas touch
+        let minDistance = 0.10;
+        candidateObjects.forEach(cube => {
+            const dist = raycaster.ray.distanceToPoint(cube.position);
+            if (dist < minDistance) {
+                minDistance = dist;
+                pickedCube = cube;
             }
+        });
+    }
+
+    if (pickedCube) {
+        if (!workspaceLocked) {
+            lockWorkspace();
         }
+        return selectCube(pickedCube);
     }
     return false;
 }
@@ -478,22 +579,19 @@ function onTouchStart(event) {
     if (event.touches.length === 1) {
         const touch = event.touches[0];
 
-        // Se ainda não iniciou a atividade e o usuário tocou na tela, reposiciona a mesa
-        if (!workspaceLocked && appState === STATE_DETECTING_SURFACE) {
-            onSelect();
-            return;
-        }
-
-        if (appState === STATE_SELECTING_OBJECT) {
-            handleObjectSelection(touch.clientX, touch.clientY);
+        if (appState === STATE_SELECTING_OBJECT || (!workspaceLocked && appState === STATE_DETECTING_SURFACE)) {
+            const selected = handleObjectSelection(touch.clientX, touch.clientY);
+            if (!selected && !workspaceLocked && appState === STATE_DETECTING_SURFACE) {
+                onSelect();
+            }
         } else if (appState === STATE_MANIPULATING && selectedObject && tabletopPlane) {
-            pointer.x = (touch.clientX / window.innerWidth) * 2 - 1;
-            pointer.y = -(touch.clientY / window.innerHeight) * 2 + 1;
-            raycaster.setFromCamera(pointer, camera);
+            updatePointer(touch.clientX, touch.clientY);
+            const activeCamera = getActiveCamera();
+            raycaster.setFromCamera(pointer, activeCamera);
 
             const hitPoint = new THREE.Vector3();
             if (raycaster.ray.intersectPlane(tabletopPlane, hitPoint)) {
-                if (!camera || hitPoint.distanceTo(camera.position) < 3.0) {
+                if (!activeCamera || hitPoint.distanceTo(activeCamera.position) < 3.0) {
                     dragOffset.set(
                         hitPoint.x - selectedObject.position.x,
                         0,
@@ -522,13 +620,13 @@ function onTouchMove(event) {
 
     if (event.touches.length === 1 && isDragging && selectedObject && appState === STATE_MANIPULATING && tabletopPlane) {
         const touch = event.touches[0];
-        pointer.x = (touch.clientX / window.innerWidth) * 2 - 1;
-        pointer.y = -(touch.clientY / window.innerHeight) * 2 + 1;
-        raycaster.setFromCamera(pointer, camera);
+        updatePointer(touch.clientX, touch.clientY);
+        const activeCamera = getActiveCamera();
+        raycaster.setFromCamera(pointer, activeCamera);
 
         const hitPoint = new THREE.Vector3();
         if (raycaster.ray.intersectPlane(tabletopPlane, hitPoint)) {
-            if (!camera || hitPoint.distanceTo(camera.position) < 3.0) {
+            if (!activeCamera || hitPoint.distanceTo(activeCamera.position) < 3.0) {
                 selectedObject.position.x = hitPoint.x - dragOffset.x;
                 selectedObject.position.z = hitPoint.z - dragOffset.z;
                 selectedObject.position.y = surfaceY + CUBE_SIZE / 2;
@@ -652,39 +750,61 @@ export function confirmTrial() {
 // 11. INSTRUMENTAÇÃO, CSV & INTERFACE
 // ===========================================================================
 function setupEventListeners() {
+    const handleStartActivity = (e) => {
+        if (e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+        lockWorkspace();
+    };
     if (startActivityBtn) {
-        startActivityBtn.addEventListener('click', () => {
-            workspaceLocked = true;
-            startActivityBtn.classList.add('hidden');
-            if (reticle) reticle.visible = false;
-            appState = STATE_SELECTING_OBJECT;
-            if (targetColorIndex !== undefined && COLORS[targetColorIndex]) {
-                updateStatus(`Alvo: ${COLORS[targetColorIndex].name} | Selecione o cubo correspondente`);
-            }
-        });
+        startActivityBtn.addEventListener('click', handleStartActivity);
+        startActivityBtn.addEventListener('touchend', handleStartActivity);
     }
 
+    const handleReconfig = (e) => {
+        if (e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+        workspaceLocked = false;
+        appState = STATE_DETECTING_SURFACE;
+        if (startActivityBtn) {
+            startActivityBtn.classList.remove('hidden');
+        }
+        const pos = (reticle && reticle.visible) ?
+            new THREE.Vector3().setFromMatrixPosition(reticle.matrix) :
+            (targetGroup ? targetGroup.position.clone() : new THREE.Vector3(0, -0.15, -0.7));
+        placeWorkspace(pos);
+        updateStatus(reticle && reticle.visible ? "Superfície detectada" : "Escaneando...");
+    };
     if (reconfigBtn) {
-        reconfigBtn.addEventListener('click', () => {
-            workspaceLocked = false;
-            appState = STATE_DETECTING_SURFACE;
-            if (startActivityBtn) {
-                startActivityBtn.classList.remove('hidden');
-            }
-            const pos = (reticle && reticle.visible) ?
-                new THREE.Vector3().setFromMatrixPosition(reticle.matrix) :
-                (targetGroup ? targetGroup.position.clone() : new THREE.Vector3(0, -0.15, -0.7));
-            placeWorkspace(pos);
-            updateStatus(reticle && reticle.visible ? "Superfície detectada" : "Escaneando...");
-        });
+        reconfigBtn.addEventListener('click', handleReconfig);
+        reconfigBtn.addEventListener('touchend', handleReconfig);
     }
 
+    const handleConfirm = (e) => {
+        if (e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+        confirmTrial();
+    };
     if (confirmBtn) {
-        confirmBtn.addEventListener('click', confirmTrial);
+        confirmBtn.addEventListener('click', handleConfirm);
+        confirmBtn.addEventListener('touchend', handleConfirm);
     }
 
+    const handleDownload = (e) => {
+        if (e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+        exportCSV();
+    };
     if (downloadBtn) {
-        downloadBtn.addEventListener('click', exportCSV);
+        downloadBtn.addEventListener('click', handleDownload);
+        downloadBtn.addEventListener('touchend', handleDownload);
     }
 
     window.addEventListener('keydown', (event) => {
