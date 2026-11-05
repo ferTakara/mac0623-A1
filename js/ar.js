@@ -90,7 +90,6 @@ const trialCountEl = document.getElementById("trialCount");
 const confirmBtn = document.getElementById("confirmBtn");
 const downloadBtn = document.getElementById("downloadBtn");
 const reconfigBtn = document.getElementById("reconfigBtn");
-const deselectBtn = document.getElementById("deselectBtn");
 const startActivityBtn = document.getElementById("startActivityBtn");
 const statusEl = document.getElementById("status");
 const fatigueModal = document.getElementById("fatigueModal");
@@ -410,7 +409,6 @@ export function placeWorkspace(position) {
     }
     isDragging = false;
     isTwisting = false;
-    if (deselectBtn) deselectBtn.classList.add('hidden');
 
     // 2. Fixa a altura da mesa e o plano matemático de interseção
     surfaceY = position.y;
@@ -533,7 +531,6 @@ export function deselectObject() {
     touchHasMoved = false;
     objectSelectedAtTouchStart = false;
     appState = STATE_SELECTING_OBJECT;
-    if (deselectBtn) deselectBtn.classList.add('hidden');
     if (navigator.vibrate) navigator.vibrate(40);
     if (targetColorIndex !== undefined && COLORS[targetColorIndex]) {
         updateStatus(`Alvo: ${COLORS[targetColorIndex].name} | Selecione o cubo`);
@@ -545,11 +542,9 @@ export function deselectObject() {
 export function selectCube(cube) {
     if (!cube) return false;
 
-    if (cube.userData.isTarget) {
-        // Seleção CORRETA
+    else {
         selectedObject = cube;
         applySelectionHighlight(selectedObject);
-        if (deselectBtn) deselectBtn.classList.remove('hidden');
 
         // Feedback tátil de sucesso no celular
         if (navigator.vibrate) navigator.vibrate([40, 40, 40]);
@@ -574,18 +569,6 @@ export function selectCube(cube) {
 
         checkDockingTolerance();
         return true;
-    } else {
-        // Seleção INCORRETA
-        wrongSelections++;
-        if (navigator.vibrate) navigator.vibrate(120);
-
-        updateStatus("Cubo incorreto! Escolha a cor do alvo.");
-        setTimeout(() => {
-            if (appState === STATE_SELECTING_OBJECT && targetColorIndex !== undefined && COLORS[targetColorIndex]) {
-                updateStatus(`Alvo: ${COLORS[targetColorIndex].name} | Selecione o cubo`);
-            }
-        }, 1200);
-        return false;
     }
 }
 
@@ -894,7 +877,6 @@ export function confirmTrial() {
         appState = STATE_FINISHED;
         if (hudEl) hudEl.classList.remove('activity-active');
         if (confirmBtn) confirmBtn.style.display = 'none';
-        if (deselectBtn) deselectBtn.classList.add('hidden');
         updateStatus("3 trials concluídos! Avalie a fadiga.");
         showFatigueModal();
     }
@@ -970,10 +952,6 @@ function setupEventListeners() {
         }
         deselectObject();
     };
-    if (deselectBtn) {
-        deselectBtn.addEventListener('click', handleDeselect);
-        deselectBtn.addEventListener('touchend', handleDeselect);
-    }
 
     const handleConfirm = (e) => {
         if (e) {
