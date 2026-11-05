@@ -428,11 +428,6 @@ export function updateStatus(text, inTolerance = false) {
     }
 }
 
-export function updateInstruction(text) {
-    if (instructionBanner) {
-        instructionBanner.textContent = text;
-    }
-}
 
 export function exportCSV() {
     // TODO: Gerar arquivo CSV para download com os 9 campos instrumentados
@@ -457,7 +452,6 @@ function render(timestamp, frame) {
                 hitTestSourceRequested = false;
                 hitTestSource = null;
                 if (reticle) reticle.visible = false;
-                updateInstruction("Sessão AR finalizada.");
                 updateStatus("—");
             });
 
@@ -479,7 +473,6 @@ function render(timestamp, frame) {
                     lastTrackingState = true;
 
                     if (appState === STATE_DETECTING_SURFACE) {
-                        updateInstruction("Superfície detectada! (Retículo alinhado com o plano)");
                         updateStatus("Superfície detectada");
                     }
                 } else {
@@ -489,14 +482,12 @@ function render(timestamp, frame) {
                         lastTrackingState = false;
                     }
                     if (appState === STATE_DETECTING_SURFACE) {
-                        updateInstruction("Rastreamento instável... Mova o celular lentamente.");
                         updateStatus("Rastreamento instável");
                     }
                 }
             } else {
                 reticle.visible = false;
                 if (appState === STATE_DETECTING_SURFACE) {
-                    updateInstruction("Escaneando espaço... Aponte para uma mesa ou chão com textura.");
                     updateStatus("Escaneando...");
                 }
             }
