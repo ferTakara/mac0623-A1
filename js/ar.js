@@ -122,10 +122,8 @@ export function init() {
     controller.addEventListener('select', onSelect);
     scene.add(controller);
 
-    // Instanciação do cubo de teste inicial (visível a 40cm à frente)
-    testCube = createDockingCube(0x007aff, false);
-    testCube.position.set(0, 0, -0.4);
-    scene.add(testCube);
+    // Instanciação da área de trabalho da atividade (Alvo Fantasma + 3 Cubos Candidatos)
+    placeWorkspace(new THREE.Vector3(0, -0.15, -0.7));
 
     setupEventListeners();
     setupTouchGestures();
@@ -137,20 +135,14 @@ export function init() {
 }
 
 function onSelect() {
-    if (reticle && reticle.visible && testCube) {
+    if (reticle && reticle.visible) {
         const pos = new THREE.Vector3();
         const quat = new THREE.Quaternion();
         const scale = new THREE.Vector3();
         reticle.matrix.decompose(pos, quat, scale);
 
-        // Ancara a base do cubo na superfície real detectada pelo retículo
-        testCube.position.copy(pos);
-        testCube.position.y += CUBE_SIZE / 2;
-        testCube.quaternion.copy(quat);
-        surfacePlaced = true;
-
-        updateInstruction("Cubo ancorado na mesa! Toque novamente para reposicionar.");
-        updateStatus("Cubo ancorado");
+        // Ancara a área de trabalho completa na superfície real detectada
+        placeWorkspace(pos);
     }
 }
 
@@ -253,7 +245,82 @@ export function createDockingCube(colorHex = 0x007aff, isGhost = false) {
 }
 
 export function placeWorkspace(position) {
-    // TODO: Fixar altura da mesa, instanciar alvo fantasma e os 3 cubos candidatos
+    // 1. Limpa objetos anteriores caso existam
+    if (testCube) {
+        scene.remove(testCube);
+        testCube = null;
+    }
+    if (targetGroup) {
+        scene.remove(targetGroup);
+        targetGroup = null;
+    }
+    candidateObjects.forEach(cube => scene.remove(cube));
+    candidateObjects = [];
+    selectedObject = null;
+
+    // 2. Fixa a altura da mesa e o plano matemático de interseção
+    surfaceY = position.y;
+    tabletopPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -surfaceY);
+    surfacePlaced = true;
+
+    // 3. Escolhe aleatoriamente a cor do alvo fantasma (Vermelho, Verde ou Azul)
+    targetColorIndex = Math.floor(Math.random() * COLORS.length);
+    const targetColor = COLORS[targetColorIndex];
+
+    // 4. Cria o alvo fantasma (translúcido, com rotação de Yaw aleatória)
+    targetGroup = createDockingCube(targetColor.hex, true);
+    targetGroup.position.set(position.x, surfaceY + CUBE_SIZE / 2, position.z);
+    targetGroup.rotation.y = Math.random() * Math.PI * 2;
+    scene.add(targetGroup);
+
+    // 5. Instancia os 3 cubos candidatos (Vermelho, Verde, Azul) a ~38 cm do alvo
+    const toCamera = new THREE.Vector3(
+        camera.position.x - position.x,
+        0,
+        camera.position.z - position.z
+    );
+    if (toCamera.lengthSq() < 0.001) {
+        toCamera.set(0, 0, 1);
+    } else {
+        toCamera.normalize();
+    }
+
+    // Embaralha as posições das cores
+    const shuffledIndices = [0, 1, 2].sort(() => Math.random() - 0.5);
+    const arcAngles = [-0.55, 0, 0.55]; // Disposição em arco (~ -32°, 0°, +32°)
+    const distance = 0.38; // 38 cm (dentro do intervalo de 30 a 50 cm)
+
+    for (let i = 0; i < 3; i++) {
+        const colorIdx = shuffledIndices[i];
+        const colorInfo = COLORS[colorIdx];
+        const cube = createDockingCube(colorInfo.hex, false);
+
+        // Rotaciona o vetor toCamera pelo ângulo do arco
+        const angle = arcAngles[i];
+        const dir = toCamera.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), angle);
+
+        cube.position.set(
+            position.x + dir.x * distance,
+            surfaceY + CUBE_SIZE / 2,
+            position.z + dir.z * distance
+        );
+
+        // Rotação inicial aleatória em torno do eixo vertical (Yaw)
+        cube.rotation.y = Math.random() * Math.PI * 2;
+
+        cube.userData = {
+            colorIndex: colorIdx,
+            colorName: colorInfo.name,
+            colorHex: colorInfo.hex,
+            isTarget: (colorIdx === targetColorIndex)
+        };
+
+        scene.add(cube);
+        candidateObjects.push(cube);
+    }
+
+    appState = STATE_SELECTING_OBJECT;
+    updateStatus(`Alvo: ${targetColor.name} | Selecione o cubo`);
 }
 
 // ===========================================================================
@@ -387,10 +454,6 @@ function render(timestamp, frame) {
                 }
             }
         }
-    }
-
-    if (!surfacePlaced && testCube) {
-        testCube.rotation.y += 0.01;
     }
 
     renderer.render(scene, camera);
