@@ -54,6 +54,7 @@ let targetGroup = null;
 let targetColorIndex = 0;
 let candidateObjects = [];
 let selectedObject = null;
+let testCube = null;
 
 // Telemetria do Estudo e Métricas CSV
 let currentTrial = 1;
@@ -116,6 +117,16 @@ export function init() {
     renderer.xr.addEventListener('sessionstart', onSessionStart);
     renderer.xr.addEventListener('sessionend', onSessionEnd);
 
+    // Controlador WebXR para receber toques de seleção no celular
+    controller = renderer.xr.getController(0);
+    controller.addEventListener('select', onSelect);
+    scene.add(controller);
+
+    // Instanciação do cubo de teste inicial (visível a 40cm à frente)
+    testCube = createDockingCube(0x007aff, false);
+    testCube.position.set(0, 0, -0.4);
+    scene.add(testCube);
+
     setupEventListeners();
     setupTouchGestures();
 
@@ -123,6 +134,24 @@ export function init() {
 
     // 4.7 Loop de animação principal
     renderer.setAnimationLoop(render);
+}
+
+function onSelect() {
+    if (reticle && reticle.visible && testCube) {
+        const pos = new THREE.Vector3();
+        const quat = new THREE.Quaternion();
+        const scale = new THREE.Vector3();
+        reticle.matrix.decompose(pos, quat, scale);
+
+        // Ancara a base do cubo na superfície real detectada pelo retículo
+        testCube.position.copy(pos);
+        testCube.position.y += CUBE_SIZE / 2;
+        testCube.quaternion.copy(quat);
+        surfacePlaced = true;
+
+        updateInstruction("Cubo ancorado na mesa! Toque novamente para reposicionar.");
+        updateStatus("Cubo ancorado");
+    }
 }
 
 function onWindowResize() {
@@ -171,9 +200,56 @@ function setupReticle() {
 // ===========================================================================
 // 6. SPAWN DE OBJETOS, MESA & ALVO FANTASMA
 // ===========================================================================
-export function createDockingCube(colorHex, isGhost = false) {
-    // TODO: Construir grupo com cubo, indicador direcional de Yaw e contorno
-    return new THREE.Group();
+export function createDockingCube(colorHex = 0x007aff, isGhost = false) {
+    const group = new THREE.Group();
+
+    // Geometria básica do cubo de 7cm
+    const boxGeo = new THREE.BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE);
+    const boxMat = new THREE.MeshStandardMaterial({
+        color: colorHex,
+        roughness: 0.35,
+        metalness: 0.15,
+        transparent: isGhost,
+        opacity: isGhost ? 0.35 : 1.0,
+        depthWrite: !isGhost
+    });
+    const cubeMesh = new THREE.Mesh(boxGeo, boxMat);
+    group.add(cubeMesh);
+
+    // Contorno (edges) de alto contraste
+    const edgeGeo = new THREE.EdgesGeometry(boxGeo);
+    const edgeMat = new THREE.LineBasicMaterial({
+        color: isGhost ? 0xffffff : 0x111111,
+        transparent: isGhost,
+        opacity: isGhost ? 0.5 : 0.9
+    });
+    const edges = new THREE.LineSegments(edgeGeo, edgeMat);
+    group.add(edges);
+
+    // Indicador direcional de Yaw no topo (seta apontando para -Z)
+    const arrowGroup = new THREE.Group();
+    const shaftGeo = new THREE.BoxGeometry(CUBE_SIZE * 0.15, 0.003, CUBE_SIZE * 0.45);
+    const headGeo = new THREE.ConeGeometry(CUBE_SIZE * 0.18, CUBE_SIZE * 0.28, 4);
+    headGeo.rotateX(-Math.PI / 2); // Aponta para -Z
+    headGeo.rotateY(Math.PI / 4);
+
+    const arrowMat = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: isGhost,
+        opacity: isGhost ? 0.6 : 0.95
+    });
+
+    const shaft = new THREE.Mesh(shaftGeo, arrowMat);
+    shaft.position.set(0, CUBE_SIZE / 2 + 0.002, CUBE_SIZE * 0.08);
+
+    const head = new THREE.Mesh(headGeo, arrowMat);
+    head.position.set(0, CUBE_SIZE / 2 + 0.002, -CUBE_SIZE * 0.2);
+
+    arrowGroup.add(shaft);
+    arrowGroup.add(head);
+    group.add(arrowGroup);
+
+    return group;
 }
 
 export function placeWorkspace(position) {
@@ -313,8 +389,11 @@ function render(timestamp, frame) {
         }
     }
 
+    if (!surfacePlaced && testCube) {
+        testCube.rotation.y += 0.01;
+    }
+
     renderer.render(scene, camera);
 }
 
-// Executa a inicialização ao carregar o módulo
 init();
