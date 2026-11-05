@@ -64,12 +64,21 @@ html, body {
 #hud #reconfigBtn { background: #d97706; }
 #hud #reconfigBtn:hover { background: #b45309; }
 
+#hud #deselectBtn { background: #64748b; }
+#hud #deselectBtn:hover { background: #475569; }
+#hud #deselectBtn:active { background: #334155; }
+#hud #deselectBtn.hidden { display: none !important; }
+
 /* HUD compacto durante a atividade no celular */
 #hud.activity-active #participantLabel,
 #hud.activity-active #mappingLabel,
 #hud.activity-active #reconfigBtn,
 #hud.activity-active #downloadBtn {
   display: none !important;
+}
+
+#hud.activity-active #deselectBtn:not(.hidden) {
+  display: inline-block !important;
 }
 
 /* Live delta-position / delta-orientation readout. Turns green when both

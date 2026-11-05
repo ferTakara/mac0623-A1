@@ -90,6 +90,7 @@ const trialCountEl = document.getElementById("trialCount");
 const confirmBtn = document.getElementById("confirmBtn");
 const downloadBtn = document.getElementById("downloadBtn");
 const reconfigBtn = document.getElementById("reconfigBtn");
+const deselectBtn = document.getElementById("deselectBtn");
 const startActivityBtn = document.getElementById("startActivityBtn");
 const statusEl = document.getElementById("status");
 const fatigueModal = document.getElementById("fatigueModal");
@@ -403,7 +404,13 @@ export function placeWorkspace(position) {
     }
     candidateObjects.forEach(cube => scene.remove(cube));
     candidateObjects = [];
-    selectedObject = null;
+    if (selectedObject) {
+        removeSelectionHighlight(selectedObject);
+        selectedObject = null;
+    }
+    isDragging = false;
+    isTwisting = false;
+    if (deselectBtn) deselectBtn.classList.add('hidden');
 
     // 2. Fixa a altura da mesa e o plano matemático de interseção
     surfaceY = position.y;
@@ -502,6 +509,39 @@ function applySelectionHighlight(group) {
     });
 }
 
+export function removeSelectionHighlight(group) {
+    if (!group) return;
+    const oldHighlight = group.getObjectByName("selectionHighlight");
+    if (oldHighlight) {
+        group.remove(oldHighlight);
+        if (oldHighlight.geometry) oldHighlight.geometry.dispose();
+        if (oldHighlight.material) oldHighlight.material.dispose();
+    }
+    group.traverse(child => {
+        if (child.isMesh && child.name !== "touchHitBox" && child.material && child.material.emissive) {
+            child.material.emissive.setHex(0x000000);
+        }
+    });
+}
+
+export function deselectObject() {
+    if (!selectedObject) return;
+    removeSelectionHighlight(selectedObject);
+    selectedObject = null;
+    isDragging = false;
+    isTwisting = false;
+    touchHasMoved = false;
+    objectSelectedAtTouchStart = false;
+    appState = STATE_SELECTING_OBJECT;
+    if (deselectBtn) deselectBtn.classList.add('hidden');
+    if (navigator.vibrate) navigator.vibrate(40);
+    if (targetColorIndex !== undefined && COLORS[targetColorIndex]) {
+        updateStatus(`Alvo: ${COLORS[targetColorIndex].name} | Selecione o cubo`);
+    } else {
+        updateStatus("Selecione o cubo correspondente");
+    }
+}
+
 export function selectCube(cube) {
     if (!cube) return false;
 
@@ -509,18 +549,14 @@ export function selectCube(cube) {
         // Seleção CORRETA
         selectedObject = cube;
         applySelectionHighlight(selectedObject);
+        if (deselectBtn) deselectBtn.classList.remove('hidden');
 
         // Feedback tátil de sucesso no celular
         if (navigator.vibrate) navigator.vibrate([40, 40, 40]);
 
-        // Oculta/remove os outros 2 cubos candidatos (Class 15)
-        candidateObjects.forEach(c => {
-            if (c !== selectedObject) {
-                scene.remove(c);
-            }
-        });
-
-        trialStartTime = performance.now();
+        if (trialStartTime === 0) {
+            trialStartTime = performance.now();
+        }
         appState = STATE_MANIPULATING;
 
         // Prepara arrasto imediato se o usuário mantiver o dedo na tela
@@ -611,6 +647,12 @@ function setupTouchGestures() {
     });
 }
 
+let touchStartX = 0;
+let touchStartY = 0;
+let touchStartTime = 0;
+let touchHasMoved = false;
+let objectSelectedAtTouchStart = false;
+
 function onTouchStart(event) {
     if (event.target.closest('#hud') || event.target.closest('button') || event.target.closest('select') || event.target.closest('input') || event.target.closest('#fatigueModal')) {
         return;
@@ -624,6 +666,11 @@ function onTouchStart(event) {
 
     if (event.touches.length === 1) {
         const touch = event.touches[0];
+        touchStartX = touch.clientX;
+        touchStartY = touch.clientY;
+        touchStartTime = performance.now();
+        touchHasMoved = false;
+        objectSelectedAtTouchStart = (selectedObject !== null && appState === STATE_MANIPULATING);
 
         if (appState === STATE_SELECTING_OBJECT || (!workspaceLocked && appState === STATE_DETECTING_SURFACE)) {
             const selected = handleObjectSelection(touch.clientX, touch.clientY);
@@ -643,7 +690,7 @@ function onTouchStart(event) {
                         0,
                         hitPoint.z - selectedObject.position.z
                     );
-                    isDragging = true;
+                    isDragging = false;
                     isTwisting = false;
                 }
             }
@@ -651,6 +698,7 @@ function onTouchStart(event) {
     } else if (event.touches.length === 2 && appState === STATE_MANIPULATING && selectedObject) {
         isDragging = false;
         isTwisting = true;
+        touchHasMoved = true;
 
         const t1 = event.touches[0];
         const t2 = event.touches[1];
@@ -664,19 +712,28 @@ function onTouchMove(event) {
     }
     event.preventDefault();
 
-    if (event.touches.length === 1 && isDragging && selectedObject && appState === STATE_MANIPULATING && tabletopPlane) {
+    if (event.touches.length === 1 && selectedObject && appState === STATE_MANIPULATING && tabletopPlane) {
         const touch = event.touches[0];
-        updatePointer(touch.clientX, touch.clientY);
-        const activeCamera = getActiveCamera();
-        raycaster.setFromCamera(pointer, activeCamera);
+        const dx = touch.clientX - touchStartX;
+        const dy = touch.clientY - touchStartY;
+        if (!touchHasMoved && (dx * dx + dy * dy >= 64)) {
+            touchHasMoved = true;
+            isDragging = true;
+        }
 
-        const hitPoint = new THREE.Vector3();
-        if (raycaster.ray.intersectPlane(tabletopPlane, hitPoint)) {
-            if (!activeCamera || hitPoint.distanceTo(activeCamera.position) < 3.0) {
-                selectedObject.position.x = hitPoint.x - dragOffset.x;
-                selectedObject.position.z = hitPoint.z - dragOffset.z;
-                selectedObject.position.y = surfaceY + CUBE_SIZE / 2;
-                checkDockingTolerance();
+        if (isDragging) {
+            updatePointer(touch.clientX, touch.clientY);
+            const activeCamera = getActiveCamera();
+            raycaster.setFromCamera(pointer, activeCamera);
+
+            const hitPoint = new THREE.Vector3();
+            if (raycaster.ray.intersectPlane(tabletopPlane, hitPoint)) {
+                if (!activeCamera || hitPoint.distanceTo(activeCamera.position) < 3.0) {
+                    selectedObject.position.x = hitPoint.x - dragOffset.x;
+                    selectedObject.position.z = hitPoint.z - dragOffset.z;
+                    selectedObject.position.y = surfaceY + CUBE_SIZE / 2;
+                    checkDockingTolerance();
+                }
             }
         }
     } else if (event.touches.length === 2 && isTwisting && selectedObject && appState === STATE_MANIPULATING) {
@@ -697,11 +754,58 @@ function onTouchMove(event) {
 
 function onTouchEnd(event) {
     if (event.touches.length === 0) {
+        const duration = performance.now() - touchStartTime;
+        // Se começou o toque com objeto selecionado e foi um toque rápido sem arrasto -> Tap de Deseleção ou Troca
+        if (objectSelectedAtTouchStart && selectedObject && !touchHasMoved && duration < 450) {
+            handleTapDeselectionOrSwitch(touchStartX, touchStartY);
+        }
         isDragging = false;
         isTwisting = false;
+        touchHasMoved = false;
+        objectSelectedAtTouchStart = false;
     } else if (event.touches.length === 1 && isTwisting) {
         isTwisting = false;
         isDragging = false;
+    }
+}
+
+function handleTapDeselectionOrSwitch(clientX, clientY) {
+    updatePointer(clientX, clientY);
+    const activeCamera = getActiveCamera();
+    raycaster.setFromCamera(pointer, activeCamera);
+
+    const meshes = [];
+    candidateObjects.forEach(cube => {
+        cube.traverse(child => {
+            if (child.isMesh) {
+                child.userData.parentCube = cube;
+                meshes.push(child);
+            }
+        });
+    });
+
+    let pickedCube = null;
+    const intersects = raycaster.intersectObjects(meshes, false);
+    if (intersects.length > 0) {
+        pickedCube = intersects[0].object.userData.parentCube;
+    } else {
+        let minDistance = 0.10;
+        candidateObjects.forEach(cube => {
+            const dist = raycaster.ray.distanceToPoint(cube.position);
+            if (dist < minDistance) {
+                minDistance = dist;
+                pickedCube = cube;
+            }
+        });
+    }
+
+    if (!pickedCube || pickedCube === selectedObject) {
+        // Toque no próprio objeto selecionado ou no vazio/mesa -> Deseleciona
+        deselectObject();
+    } else {
+        // Toque em outro cubo candidato -> Troca de seleção
+        deselectObject();
+        selectCube(pickedCube);
     }
 }
 
@@ -790,6 +894,7 @@ export function confirmTrial() {
         appState = STATE_FINISHED;
         if (hudEl) hudEl.classList.remove('activity-active');
         if (confirmBtn) confirmBtn.style.display = 'none';
+        if (deselectBtn) deselectBtn.classList.add('hidden');
         updateStatus("3 trials concluídos! Avalie a fadiga.");
         showFatigueModal();
     }
@@ -858,6 +963,18 @@ function setupEventListeners() {
         reconfigBtn.addEventListener('touchend', handleReconfig);
     }
 
+    const handleDeselect = (e) => {
+        if (e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+        deselectObject();
+    };
+    if (deselectBtn) {
+        deselectBtn.addEventListener('click', handleDeselect);
+        deselectBtn.addEventListener('touchend', handleDeselect);
+    }
+
     const handleConfirm = (e) => {
         if (e) {
             e.preventDefault();
@@ -898,6 +1015,8 @@ function setupEventListeners() {
     window.addEventListener('keydown', (event) => {
         if (event.key === 'Enter') {
             confirmTrial();
+        } else if (event.key === 'Escape') {
+            deselectObject();
         }
     });
 }
