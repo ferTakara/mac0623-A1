@@ -55,6 +55,7 @@ let targetColorIndex = 0;
 let candidateObjects = [];
 let selectedObject = null;
 let testCube = null;
+let workspaceLocked = false;
 
 // Telemetria do Estudo e Métricas CSV
 let currentTrial = 1;
@@ -74,7 +75,7 @@ const mappingSelect = document.getElementById("mappingSelect");
 const trialCountEl = document.getElementById("trialCount");
 const confirmBtn = document.getElementById("confirmBtn");
 const downloadBtn = document.getElementById("downloadBtn");
-const instructionBanner = document.getElementById("instructionBanner");
+const startActivityBtn = document.getElementById("startActivityBtn");
 const statusEl = document.getElementById("status");
 
 
@@ -135,6 +136,9 @@ export function init() {
 }
 
 function onSelect() {
+    // Se o workplace já foi travado com "Começar atividade?", impede mover os objetos
+    if (workspaceLocked) return;
+
     if (reticle && reticle.visible) {
         const pos = new THREE.Vector3();
         const quat = new THREE.Quaternion();
@@ -143,6 +147,11 @@ function onSelect() {
 
         // Ancara a área de trabalho completa na superfície real detectada
         placeWorkspace(pos);
+
+        // Exibe o botão para o usuário poder travar e iniciar a atividade
+        if (startActivityBtn) {
+            startActivityBtn.classList.remove('hidden');
+        }
     }
 }
 
@@ -369,7 +378,17 @@ export function confirmTrial() {
 // 11. INSTRUMENTAÇÃO, CSV & INTERFACE
 // ===========================================================================
 function setupEventListeners() {
-    // TODO: Vincular cliques dos botões (Confirmar, Download CSV, Troca de Técnica)
+    if (startActivityBtn) {
+        startActivityBtn.addEventListener('click', () => {
+            workspaceLocked = true;
+            startActivityBtn.classList.add('hidden');
+            if (reticle) reticle.visible = false;
+            appState = STATE_SELECTING_OBJECT;
+            if (targetColorIndex !== undefined && COLORS[targetColorIndex]) {
+                updateStatus(`Alvo: ${COLORS[targetColorIndex].name} | Selecione o cubo correspondente`);
+            }
+        });
+    }
 }
 
 export function updateStatus(text, inTolerance = false) {
@@ -419,7 +438,9 @@ function render(timestamp, frame) {
             hitTestSourceRequested = true;
         }
 
-        if (hitTestSource) {
+        if (workspaceLocked) {
+            if (reticle) reticle.visible = false;
+        } else if (hitTestSource) {
             const hitTestResults = frame.getHitTestResults(hitTestSource);
 
             if (hitTestResults.length > 0) {
