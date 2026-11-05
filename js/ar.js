@@ -75,6 +75,7 @@ const mappingSelect = document.getElementById("mappingSelect");
 const trialCountEl = document.getElementById("trialCount");
 const confirmBtn = document.getElementById("confirmBtn");
 const downloadBtn = document.getElementById("downloadBtn");
+const reconfigBtn = document.getElementById("reconfigBtn");
 const startActivityBtn = document.getElementById("startActivityBtn");
 const statusEl = document.getElementById("status");
 
@@ -125,6 +126,7 @@ export function init() {
 
     // Instanciação da área de trabalho da atividade (Alvo Fantasma + 3 Cubos Candidatos)
     placeWorkspace(new THREE.Vector3(0, -0.15, -0.7));
+    updateStatus("Escaneando...");
 
     setupEventListeners();
     setupTouchGestures();
@@ -167,15 +169,19 @@ function onWindowResize() {
 async function onSessionStart() {
     hitTestSourceRequested = false;
     hitTestSource = null;
-    updateInstruction("Escaneando o espaço... Aponte a câmera para uma mesa ou chão.");
+    workspaceLocked = false;
+    appState = STATE_DETECTING_SURFACE;
+    if (startActivityBtn) {
+        startActivityBtn.classList.remove('hidden');
+    }
     updateStatus("Escaneando...");
 }
 
 function onSessionEnd() {
     hitTestSource = null;
     hitTestSourceRequested = false;
+    workspaceLocked = false;
     if (reticle) reticle.visible = false;
-    updateInstruction("Sessão AR finalizada.");
     updateStatus("—");
 }
 
@@ -328,8 +334,13 @@ export function placeWorkspace(position) {
         candidateObjects.push(cube);
     }
 
-    appState = STATE_SELECTING_OBJECT;
-    updateStatus(`Alvo: ${targetColor.name} | Selecione o cubo`);
+    if (!workspaceLocked) {
+        appState = STATE_DETECTING_SURFACE;
+        updateStatus("Superfície detectada");
+    } else {
+        appState = STATE_SELECTING_OBJECT;
+        updateStatus(`Alvo: ${targetColor.name} | Selecione o cubo`);
+    }
 }
 
 // ===========================================================================
@@ -386,6 +397,21 @@ function setupEventListeners() {
             appState = STATE_SELECTING_OBJECT;
             if (targetColorIndex !== undefined && COLORS[targetColorIndex]) {
                 updateStatus(`Alvo: ${COLORS[targetColorIndex].name} | Selecione o cubo correspondente`);
+            }
+        });
+    }
+
+    if (reconfigBtn) {
+        reconfigBtn.addEventListener('click', () => {
+            workspaceLocked = false;
+            appState = STATE_DETECTING_SURFACE;
+            if (startActivityBtn) {
+                startActivityBtn.classList.remove('hidden');
+            }
+            if (reticle && reticle.visible) {
+                updateStatus("Superfície detectada");
+            } else {
+                updateStatus("Escaneando...");
             }
         });
     }

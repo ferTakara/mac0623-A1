@@ -61,6 +61,9 @@ html, body {
 #downloadBtn { background: #457; }
 #downloadBtn:hover { background: #568; }
 
+#reconfigBtn { background: #d97706; }
+#reconfigBtn:hover { background: #b45309; }
+
 /* Live delta-position / delta-orientation readout. Turns green when both
    are within tolerance — a hint for the participant, not a gate:
    Confirm still works out of tolerance (see main.js). */
@@ -112,15 +115,15 @@ canvas { display: block; }
   bottom: 28px;
   left: 50%;
   transform: translateX(-50%);
-  background: #007aff;
+  background: #2a5;
   color: #fff;
   border: 1px solid rgba(255, 255, 255, 0.3);
   padding: 12px 26px;
-  border-radius: 25px;
+  border-radius: 3px;
   font-size: 15px;
   font-weight: 600;
   text-align: center;
-  box-shadow: 0 4px 18px rgba(0, 122, 255, 0.45);
+  box-shadow: 0 4px 18px rgba(94, 100, 106, 0.45);
   cursor: pointer;
   z-index: 30;
   pointer-events: auto;
@@ -129,7 +132,7 @@ canvas { display: block; }
 }
 
 #startActivityBtn:hover {
-  background: #0066d6;
+  background: #2a5;
 }
 
 #startActivityBtn:active {
