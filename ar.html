@@ -8,30 +8,30 @@
 </head>
 <body>
 
-  <!-- ============================================================
-       HUD — provided, same fields as the A1 starter (participant ID,
-       mapping select, trial counter, confirm/download) plus a status
-       line that also reports VR state once the retrofit is wired.
-       Don't remove these IDs; main.js reads them exactly.
-       ============================================================ -->
-  <div id="hud">
-    <label>Participant <input id="participantId" value="P01" size="4" /></label>
-    <label id="mappingLabel">Mapping
-      <select id="mappingSelect">
-        <option value="1">1 — baseline: touch gestures</option>
-        <option value="2">2 — your own</option>
-      </select>
-    </label>
-    <span id="trialCount">Trial 1</span>
-    <button id="confirmBtn">Confirm (Enter)</button>
-    <button id="downloadBtn">Download CSV</button>
-    <span id="status">—</span>
-  </div>
+  <!-- Container para WebXR DOM Overlay (obrigatório para AR no Chrome Mobile) -->
+  <div id="ar-overlay">
+    <div id="hud">
+      <label>Participant <input id="participantId" value="P01" size="4" /></label>
+      <label id="mappingLabel">Mapping
+        <select id="mappingSelect">
+          <option value="1">1 — baseline: touch gestures</option>
+          <option value="2">2 — your own</option>
+        </select>
+      </label>
+      <span id="trialCount">Trial 1</span>
+      <button id="confirmBtn">Confirm (Enter)</button>
+      <button id="downloadBtn">Download CSV</button>
+      <span id="status">—</span>
+    </div>
 
-  <div id="help">
-    Confirm logs your current error and starts the next trial — it does not
-    require being in tolerance first. The status pill turns green as a hint,
-    not a gate. See README.md and the STUDENT TODO comments in main.js.
+    <!-- Banner flutuante de instruções para escaneamento e feedback de status -->
+    <div id="instructionBanner">Aponte a câmera para uma superfície plana (mesa ou chão) para escanear...</div>
+
+    <div id="help">
+      Confirm logs your current error and starts the next trial — it does not
+      require being in tolerance first. The status pill turns green as a hint,
+      not a gate. See README.md.
+    </div>
   </div>
 
   <script type="importmap">

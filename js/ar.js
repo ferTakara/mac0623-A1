@@ -73,6 +73,8 @@ const mappingSelect = document.getElementById("mappingSelect");
 const trialCountEl = document.getElementById("trialCount");
 const confirmBtn = document.getElementById("confirmBtn");
 const downloadBtn = document.getElementById("downloadBtn");
+const instructionBanner = document.getElementById("instructionBanner");
+const statusEl = document.getElementById("status");
 
 
 // ===========================================================================
@@ -102,10 +104,11 @@ export function init() {
     setupReticle();
 
     // 4.5 Configuração do Botão WebXR (ARButton com dom-overlay e hit-test)
+    const overlayRoot = document.getElementById('ar-overlay') || document.body;
     const sessionInit = {
         requiredFeatures: ['hit-test'],
         optionalFeatures: ['dom-overlay'],
-        domOverlay: { root: document.getElementById('ar-overlay') }
+        domOverlay: { root: overlayRoot }
     };
     document.body.appendChild(ARButton.createButton(renderer, sessionInit));
 
@@ -132,15 +135,37 @@ function onWindowResize() {
 // 5. GESTÃO DE SESSÃO WEBXR (HIT-TEST & RASTREAMENTO)
 // ===========================================================================
 async function onSessionStart() {
-    // TODO: Obter viewerReferenceSpace e inicializar hitTestSource
+    hitTestSourceRequested = false;
+    hitTestSource = null;
+    updateInstruction("Escaneando o espaço... Aponte a câmera para uma mesa ou chão.");
+    updateStatus("Escaneando...");
 }
 
 function onSessionEnd() {
-    // TODO: Resetar variáveis de sessão AR e visibilidade do retículo
+    hitTestSource = null;
+    hitTestSourceRequested = false;
+    if (reticle) reticle.visible = false;
+    updateInstruction("Sessão AR finalizada.");
+    updateStatus("—");
 }
 
 function setupReticle() {
-    // TODO: Criar geometria e material do retículo circular de mira
+    // Retículo circular para projeção do hit-test na superfície real
+    reticle = new THREE.Mesh(
+        new THREE.RingGeometry(0.045, 0.055, 32).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide })
+    );
+    reticle.matrixAutoUpdate = false;
+    reticle.visible = false;
+
+    // Ponto central para facilitar a mira
+    const centerDot = new THREE.Mesh(
+        new THREE.CircleGeometry(0.008, 16).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0x34c759, side: THREE.DoubleSide })
+    );
+    reticle.add(centerDot);
+
+    scene.add(reticle);
 }
 
 // ===========================================================================
@@ -180,14 +205,7 @@ function updateTouchDrag(clientX, clientY) {
 // ===========================================================================
 // 9. TÉCNICA 2: DEVICE-ORIENTATION CARRY (DESIGN DO ALUNO)
 // ===========================================================================
-function setupCarryTechnique() {
-    // TODO: Configurar listeners do botão flutuante #btn-carry (segurar/soltar)
-}
 
-function updateCarryTechnique() {
-    // TODO: Translação: projetar retículo central da tela no plano da mesa
-    // TODO: Rotação: mapear o Yaw do celular diretamente na orientação do cubo
-}
 
 // ===========================================================================
 // 10. AVALIAÇÃO DE TOLERÂNCIA DE DOCKING (3 DoF: X, Z, YAW)
@@ -209,11 +227,23 @@ export function confirmTrial() {
 // ===========================================================================
 function setupEventListeners() {
     // TODO: Vincular cliques dos botões (Confirmar, Download CSV, Troca de Técnica)
-    // TODO: Vincular botões do modal de fadiga muscular (1 a 5)
 }
 
 export function updateStatus(text, inTolerance = false) {
-    // TODO: Atualizar banner de telemetria sem dicas ou spoilers
+    if (statusEl) {
+        statusEl.textContent = text;
+        if (inTolerance) {
+            statusEl.classList.add("in-tolerance");
+        } else {
+            statusEl.classList.remove("in-tolerance");
+        }
+    }
+}
+
+export function updateInstruction(text) {
+    if (instructionBanner) {
+        instructionBanner.textContent = text;
+    }
 }
 
 export function exportCSV() {
@@ -225,12 +255,64 @@ export function exportCSV() {
 // ===========================================================================
 function render(timestamp, frame) {
     if (frame) {
-        // TODO: Processar resultados do hit-test a cada frame
-        // TODO: Atualizar pose do retículo e monitorar tracking_lost
+        const referenceSpace = renderer.xr.getReferenceSpace();
+        const session = renderer.xr.getSession();
+
+        if (hitTestSourceRequested === false) {
+            session.requestReferenceSpace('viewer').then(function (referenceSpace) {
+                session.requestHitTestSource({ space: referenceSpace }).then(function (source) {
+                    hitTestSource = source;
+                });
+            });
+
+            session.addEventListener('end', function () {
+                hitTestSourceRequested = false;
+                hitTestSource = null;
+                if (reticle) reticle.visible = false;
+                updateInstruction("Sessão AR finalizada.");
+                updateStatus("—");
+            });
+
+            hitTestSourceRequested = true;
+        }
+
+        if (hitTestSource) {
+            const hitTestResults = frame.getHitTestResults(hitTestSource);
+
+            if (hitTestResults.length > 0) {
+                const hit = hitTestResults[0];
+                const pose = hit.getPose(referenceSpace);
+
+                if (pose) {
+                    reticle.visible = true;
+                    reticle.matrix.fromArray(pose.transform.matrix);
+                    lastTrackingState = true;
+
+                    if (appState === STATE_DETECTING_SURFACE) {
+                        updateInstruction("Superfície detectada! (Retículo alinhado com o plano)");
+                        updateStatus("Superfície detectada");
+                    }
+                } else {
+                    reticle.visible = false;
+                    if (lastTrackingState) {
+                        trackingLostCount++;
+                        lastTrackingState = false;
+                    }
+                    if (appState === STATE_DETECTING_SURFACE) {
+                        updateInstruction("Rastreamento instável... Mova o celular lentamente.");
+                        updateStatus("Rastreamento instável");
+                    }
+                }
+            } else {
+                reticle.visible = false;
+                if (appState === STATE_DETECTING_SURFACE) {
+                    updateInstruction("Escaneando espaço... Aponte para uma mesa ou chão com textura.");
+                    updateStatus("Escaneando...");
+                }
+            }
+        }
     }
 
-    // TODO: Atualizar manipulação ativa (se Carry ativo ou monitoramento contínuo)
-    // TODO: Renderizar cena
     renderer.render(scene, camera);
 }
 
