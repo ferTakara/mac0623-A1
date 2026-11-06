@@ -53,6 +53,7 @@ let surfacePlaced = false;
 // Estado da Tarefa e Objetos da Cena
 let appState = STATE_DETECTING_SURFACE;
 let targetGroup = null;
+let targetCube = null;
 let targetColorIndex = 0;
 let candidateObjects = [];
 let selectedObject = null;
@@ -464,8 +465,10 @@ export function placeWorkspace(position) {
             colorIndex: colorIdx,
             colorName: colorInfo.name,
             colorHex: colorInfo.hex,
-            isTarget: (colorIdx === targetColorIndex)
+            isTarget: (colorIdx === targetColorIndex)   
         };
+
+        if (cube.userData.isTarget) targetCube = cube
 
         scene.add(cube);
         candidateObjects.push(cube);
@@ -801,12 +804,12 @@ export function checkDockingTolerance() {
     }
 
     // 1. Erro de translação no plano horizontal XZ (em cm)
-    const dx = (selectedObject.position.x - targetGroup.position.x) * 100;
-    const dz = (selectedObject.position.z - targetGroup.position.z) * 100;
+    const dx = (targetCube.position.x - targetGroup.position.x) * 100;
+    const dz = (targetCube.position.z - targetGroup.position.z) * 100;
     const posErrorCm = Math.sqrt(dx * dx + dz * dz);
 
     // 2. Erro de rotação em torno do eixo vertical Yaw (em graus [0, 180])
-    let yawDiff = (selectedObject.rotation.y - targetGroup.rotation.y) % (Math.PI * 2);
+    let yawDiff = (targetCube.rotation.y - targetGroup.rotation.y) % (Math.PI * 2);
     while (yawDiff > Math.PI) yawDiff -= Math.PI * 2;
     while (yawDiff < -Math.PI) yawDiff += Math.PI * 2;
     const yawErrorDeg = Math.abs(yawDiff * 180 / Math.PI);
