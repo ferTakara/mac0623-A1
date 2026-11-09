@@ -2,287 +2,258 @@ import * as THREE from 'three';
 import { ARButton } from 'three/addons/webxr/ARButton.js';
 
 // ===========================================================================
-// 1. CONSTANTES & CONFIGURAÇÕES GERAIS
-
-export const CUBE_SIZE = 0.07;           
+// 1. CONSTANTES
+// ===========================================================================
+export const CUBE_SIZE = 0.07;
 export const TARGET_DISTANCE_MIN = 0.30;
-export const TARGET_DISTANCE_MAX = 0.45; 
+export const TARGET_DISTANCE_MAX = 0.45;
 export const TOLERANCE_POS_CM = 2.0;
 export const TOLERANCE_YAW_DEG = 10.0;
-export const ROTATION_GAIN_TECHNIQUE2 = 2.0; // Ganho rotacional 1:2 para ergonomia
+export const ROTATION_GAIN_TECHNIQUE2 = 2.0; // ganho rotacional 1:2
 
-// Cores disponíveis para os cubos candidatos e o alvo fantasma
 export const COLORS = [
     { name: 'Vermelho', hex: 0xff3b30 },
     { name: 'Verde',    hex: 0x34c759 },
     { name: 'Azul',     hex: 0x007aff }
 ];
 
-// Máquina de estados da aplicação
 export const STATE_DETECTING_SURFACE = 0;
-export const STATE_SELECTING_OBJECT  = 1; 
+export const STATE_SELECTING_OBJECT  = 1;
 export const STATE_MANIPULATING      = 2;
 export const STATE_FINISHED          = 3;
 
-// Cabeçalho dos campos do CSV (9 métricas + arm_fatigue)
 export const CSV_HEADER = [
-    'participant_id',
-    'technique',
-    'trial',
-    'completion_time_s',
-    'pos_error_cm',
-    'yaw_error_deg',
-    'wrong_selections',
-    'touch_count',
-    'tracking_lost',
-    'arm_fatigue'
+    'participant_id', 'technique', 'trial', 'completion_time_s',
+    'pos_error_cm', 'yaw_error_deg', 'wrong_selections',
+    'touch_count', 'tracking_lost', 'arm_fatigue'
 ];
 
+const MAX_TRIALS = 3;
+const CANDIDATE_DISTANCE = 0.38;               // dentro de [MIN, MAX]
+const CANDIDATE_ARC_ANGLES = [-0.55, 0, 0.55]; // ~ -32°, 0°, +32°
+const PICK_PROXIMITY = 0.10;                   // tolerância de toque (m)
+const DRAG_THRESHOLD_PX = 8;
+const TAP_MAX_MS = 450;
+const HUD_SAFE_MARGIN_PX = 12;
+const MAX_RAY_DISTANCE_TOUCH = 3.0;
+const MAX_RAY_DISTANCE_T2 = 5.0;
+const DEFAULT_ANCHOR = new THREE.Vector3(0, -0.15, -0.7);
+const SCREEN_CENTER = new THREE.Vector2(0, 0);
+const UP = new THREE.Vector3(0, 1, 0);
+const UI_SELECTOR = '#hud, button, select, input, #fatigueModal';
+
+const HIGHLIGHT_IDLE = 0xffcc00;
+const HIGHLIGHT_OK = 0x34c759;
+
 // ===========================================================================
-// 2. VARIÁVEIS GLOBAIS DE ESTADO
+// 2. ESTADO
 // ===========================================================================
-// Three.js & WebXR
-let scene, camera, renderer;
-let controller;
+// Three.js / WebXR
+let scene, camera, renderer, controller, reticle;
 let hitTestSource = null;
-let hitTestSourceRequested = false;
-let reticle;
-let tabletopPlane;
+
+// Mundo
+let tabletopPlane = null;
 let surfaceY = 0;
 let surfacePlaced = false;
-
-// Estado da Tarefa e Objetos da Cena
-let appState = STATE_DETECTING_SURFACE;
 let targetGroup = null;
 let targetCube = null;
 let targetColorIndex = 0;
 let candidateObjects = [];
 let selectedObject = null;
-let testCube = null;
+
+// Tarefa
+let appState = STATE_DETECTING_SURFACE;
 let workspaceLocked = false;
-
-// Variáveis para Seleção e Gestos Touch (Técnica 1)
-const raycaster = new THREE.Raycaster();
-const pointer = new THREE.Vector2();
-let isDragging = false;
-let isTwisting = false;
-const dragOffset = new THREE.Vector3();
-let lastTouchAngle = 0;
-let isRightClickRotating = false;
-let lastDesktopMouseX = 0;
-
-// Telemetria do Estudo e Métricas CSV
 let currentTrial = 1;
 let trialStartTime = 0;
-let wrongSelections = 0;
-let touchCount = 0;
-let trackingLostCount = 0;
+let blockStartIndex = 0;      // primeira linha do CSV do bloco (técnica) atual
 let lastTrackingState = true;
-let lastArmFatigue = null;
+const metrics = { wrongSelections: 0, touchCount: 0, trackingLost: 0 };
 const csvRows = [];
 
-// ===========================================================================
-// 3. REFERÊNCIAS A ELEMENTOS DO DOM (HUD / OVERLAY)
-// ===========================================================================
-const hudEl = document.getElementById("hud");
-const helpEl = document.getElementById("help");
-const participantIdInput = document.getElementById("participantId");
-const mappingSelect = document.getElementById("mappingSelect");
-const confirmBtn = document.getElementById("confirmBtn");
-const downloadBtn = document.getElementById("downloadBtn");
-const startActivityBtn = document.getElementById("startActivityBtn");
-const statusEl = document.getElementById("status");
-const fatigueModal = document.getElementById("fatigueModal");
-const fatigueButtons = document.getElementById("fatigueButtons");
-const centerReticle = document.getElementById("centerReticle");
-
-// Variáveis para Técnica 2 (Raycast Central + Rotação pelo Celular como Volante)
+// Técnica 2
 let lastPhoneRoll = 0;
 
+// Gestos (Técnica 1)
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+const gesture = {
+    isDragging: false,
+    isTwisting: false,
+    hasMoved: false,
+    selectedAtStart: false,
+    startX: 0,
+    startY: 0,
+    startTime: 0,
+    lastAngle: 0,
+    dragOffset: new THREE.Vector3()
+};
+
+// ===========================================================================
+// 3. DOM
+// ===========================================================================
+const $ = (id) => document.getElementById(id);
+const hudEl = $('hud');
+const helpEl = $('help');
+const participantIdInput = $('participantId');
+const mappingSelect = $('mappingSelect');
+const confirmBtn = $('confirmBtn');
+const downloadBtn = $('downloadBtn');
+const startActivityBtn = $('startActivityBtn');
+const statusEl = $('status');
+const fatigueModal = $('fatigueModal');
+const fatigueButtons = $('fatigueButtons');
+const centerReticle = $('centerReticle');
+
+const setHidden = (el, hidden) => el && el.classList.toggle('hidden', hidden);
+
+export function updateStatus(text, inTolerance = false) {
+    if (!statusEl) return;
+    statusEl.textContent = text;
+    statusEl.classList.toggle('in-tolerance', inTolerance);
+}
+
+/** Sincroniza toda a interface com o modo (treino livre x atividade). */
+function setActivityUI(active) {
+    setHidden(startActivityBtn, active);
+    setHidden(helpEl, active);
+    setHidden(confirmBtn, !active);
+    setHidden(centerReticle, true);
+    if (hudEl) hudEl.classList.toggle('activity-active', active);
+    if (participantIdInput) participantIdInput.disabled = active;
+    if (active && reticle) reticle.visible = false;
+}
+
+// ===========================================================================
+// 4. HELPERS GERAIS
+// ===========================================================================
 export function isTechnique2() {
-    return mappingSelect && mappingSelect.value === "2";
+    return mappingSelect?.value === '2';
+}
+
+const getTechniqueName = () => (isTechnique2() ? 'technique2' : 'touch');
+const getParticipantId = () => participantIdInput?.value.trim() || 'P01';
+const isTaskRunning = () =>
+    workspaceLocked && (appState === STATE_SELECTING_OBJECT || appState === STATE_MANIPULATING);
+
+export function getActiveCamera() {
+    if (renderer?.xr?.isPresenting) {
+        const xrCam = renderer.xr.getCamera();
+        if (xrCam?.cameras?.length > 0) return xrCam.cameras[0];
+    }
+    return camera;
 }
 
 export function getPhoneRoll(cam) {
     if (!cam) return 0;
-    const camQuat = new THREE.Quaternion();
-    cam.getWorldQuaternion(camQuat);
-    const invQuat = camQuat.clone().invert();
-    // Vetor UP do mundo projetado no referencial local da tela do smartphone
-    const localUp = new THREE.Vector3(0, 1, 0).applyQuaternion(invQuat);
+    const inv = cam.getWorldQuaternion(new THREE.Quaternion()).invert();
+    const localUp = UP.clone().applyQuaternion(inv);
     return Math.atan2(localUp.x, localUp.y);
 }
 
+const normalizeAngle = (a) => {
+    a = (a + Math.PI) % (Math.PI * 2);
+    if (a < 0) a += Math.PI * 2;
+    return a - Math.PI;
+};
+
+export function shuffle(array) { // Fisher-Yates
+    const arr = [...array];
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+}
+
+function disposeObject(obj) {
+    obj.traverse((child) => {
+        child.geometry?.dispose();
+        const mats = Array.isArray(child.material) ? child.material : [child.material];
+        mats.forEach((m) => m?.dispose());
+    });
+}
+
+function resetMetrics() {
+    metrics.wrongSelections = 0;
+    metrics.touchCount = 0;
+    metrics.trackingLost = 0;
+    trialStartTime = performance.now();
+}
+
+function resetGesture() {
+    gesture.isDragging = false;
+    gesture.isTwisting = false;
+    gesture.hasMoved = false;
+    gesture.selectedAtStart = false;
+}
 
 // ===========================================================================
-// 4. INICIALIZAÇÃO DO AMBIENTE THREE.JS & WEBXR
+// 5. INICIALIZAÇÃO THREE.JS / WEBXR
 // ===========================================================================
 export function init() {
-    // 4.2 Criação de Cena, Câmera e Iluminação
     scene = new THREE.Scene();
     camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
 
-    const hemiLight = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1.5);
-    hemiLight.position.set(0.5, 1, 0.25);
-    scene.add(hemiLight);
+    const hemi = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1.5);
+    hemi.position.set(0.5, 1, 0.25);
+    scene.add(hemi);
 
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
-    dirLight.position.set(1, 3, 2);
-    scene.add(dirLight);
+    const dir = new THREE.DirectionalLight(0xffffff, 1.0);
+    dir.position.set(1, 3, 2);
+    scene.add(dir);
 
-    // 4.3 Renderer WebGL com suporte a WebXR
     renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.xr.enabled = true;
     document.body.appendChild(renderer.domElement);
 
-    // 4.4 Retículo para Hit-Test sobre superfícies reais
     setupReticle();
 
-    // 4.5 Configuração do Botão WebXR (ARButton com dom-overlay e hit-test)
-    const overlayRoot = document.getElementById('ar-overlay') || document.body;
+    const overlayRoot = $('ar-overlay') || document.body;
+    // Evita que toques no DOM Overlay gerem eventos 'select' duplicados
+    overlayRoot.addEventListener('beforexrselect', (e) => e.preventDefault());
 
-    // Previne que toques no DOM Overlay disparem eventos select duplicados no WebXR controller
-    overlayRoot.addEventListener('beforexrselect', (e) => {
-        e.preventDefault();
-    });
-
-    const sessionInit = {
+    document.body.appendChild(ARButton.createButton(renderer, {
         requiredFeatures: ['hit-test'],
         optionalFeatures: ['dom-overlay'],
         domOverlay: { root: overlayRoot }
-    };
-    document.body.appendChild(ARButton.createButton(renderer, sessionInit));
+    }));
 
-    // 4.6 Registro de eventos de sessão e interface
     renderer.xr.addEventListener('sessionstart', onSessionStart);
     renderer.xr.addEventListener('sessionend', onSessionEnd);
 
-    // Controlador WebXR para receber toques de seleção no celular
     controller = renderer.xr.getController(0);
     controller.addEventListener('select', onSelect);
     scene.add(controller);
 
-    // Instanciação da área de trabalho da atividade (Alvo Fantasma + 3 Cubos Candidatos)
-    placeWorkspace(new THREE.Vector3(0, -0.15, -0.7));
-    if (startActivityBtn) {
-        startActivityBtn.classList.remove('hidden');
-    }
-    updateStatus("Escaneando...");
+    placeWorkspace(DEFAULT_ANCHOR);
+    setHidden(startActivityBtn, false);
+    updateStatus('Escaneando...');
 
     setupEventListeners();
     setupTouchGestures();
-
     window.addEventListener('resize', onWindowResize);
 
-    // 4.7 Loop de animação principal
     renderer.setAnimationLoop(render);
 }
 
-export function getActiveCamera() {
-    if (renderer && renderer.xr && renderer.xr.isPresenting) {
-        const xrCamera = renderer.xr.getCamera();
-        if (xrCamera && xrCamera.cameras && xrCamera.cameras.length > 0) {
-            return xrCamera.cameras[0];
-        }
-    }
-    return camera;
-}
+function setupReticle() {
+    reticle = new THREE.Mesh(
+        new THREE.RingGeometry(0.045, 0.055, 32).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide })
+    );
+    reticle.matrixAutoUpdate = false;
+    reticle.visible = false;
 
-export function updatePointer(clientX, clientY) {
-    if (renderer && renderer.domElement) {
-        const rect = renderer.domElement.getBoundingClientRect();
-        const width = rect.width || window.innerWidth;
-        const height = rect.height || window.innerHeight;
-        pointer.x = ((clientX - rect.left) / width) * 2 - 1;
-        pointer.y = -((clientY - rect.top) / height) * 2 + 1;
-    } else {
-        pointer.x = (clientX / window.innerWidth) * 2 - 1;
-        pointer.y = -(clientY / window.innerHeight) * 2 + 1;
-    }
-}
-
-export function lockWorkspace() {
-    workspaceLocked = true;
-    currentTrial = 1;
-
-    // Reseta as posições dos cubos e exibe o alvo fantasma para a atividade
-    const currentPos = targetGroup ? targetGroup.position.clone() : new THREE.Vector3(0, surfaceY || -0.15, -0.7);
-    if (surfacePlaced) currentPos.y = surfaceY;
-    placeWorkspace(currentPos);
-
-    if (startActivityBtn) startActivityBtn.classList.add('hidden');
-    if (confirmBtn) confirmBtn.style.display = '';
-    if (helpEl) helpEl.classList.add('hidden');
-    if (hudEl) hudEl.classList.add('activity-active');
-    if (participantIdInput) participantIdInput.disabled = true;
-    if (reticle) reticle.visible = false;
-
-    // Zera contadores ao começar a atividade
-    touchCount = 0;
-    trackingLostCount = 0;
-    wrongSelections = 0;
-    trialStartTime = performance.now();
-
-    appState = STATE_SELECTING_OBJECT;
-    if (targetColorIndex !== undefined && COLORS[targetColorIndex]) {
-        updateStatus(`Trial 1: Alvo ${COLORS[targetColorIndex].name} | Selecione o cubo`);
-    }
-}
-
-function onSelect() {
-    // Se o workplace não está travado, permite mover a mesa ou selecionar o cubo diretamente
-    if (!workspaceLocked) {
-        if (reticle && reticle.visible) {
-            const pos = new THREE.Vector3();
-            const quat = new THREE.Quaternion();
-            const scale = new THREE.Vector3();
-            reticle.matrix.decompose(pos, quat, scale);
-            placeWorkspace(pos);
-            if (startActivityBtn) {
-                startActivityBtn.classList.remove('hidden');
-            }
-        }
-        return;
-    }
-
-    // Se workspace já está travado e estamos aguardando seleção:
-    if (appState === STATE_SELECTING_OBJECT && controller) {
-        const tempMatrix = new THREE.Matrix4();
-        tempMatrix.identity().extractRotation(controller.matrixWorld);
-        raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
-        raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
-
-        let pickedCube = null;
-        const meshes = [];
-        candidateObjects.forEach(cube => {
-            cube.traverse(child => {
-                if (child.isMesh) {
-                    child.userData.parentCube = cube;
-                    meshes.push(child);
-                }
-            });
-        });
-
-        const intersects = raycaster.intersectObjects(meshes, false);
-        if (intersects.length > 0) {
-            pickedCube = intersects[0].object.userData.parentCube;
-        } else {
-            let minDistance = 0.10;
-            candidateObjects.forEach(cube => {
-                const dist = raycaster.ray.distanceToPoint(cube.position);
-                if (dist < minDistance) {
-                    minDistance = dist;
-                    pickedCube = cube;
-                }
-            });
-        }
-
-        if (pickedCube) {
-            selectCube(pickedCube);
-        }
-    }
+    const dot = new THREE.Mesh(
+        new THREE.CircleGeometry(0.008, 16).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0x34c759, side: THREE.DoubleSide })
+    );
+    reticle.add(dot);
+    scene.add(reticle);
 }
 
 function onWindowResize() {
@@ -292,344 +263,296 @@ function onWindowResize() {
 }
 
 // ===========================================================================
-// 5. GESTÃO DE SESSÃO WEBXR (HIT-TEST & RASTREAMENTO)
+// 6. SESSÃO WEBXR
 // ===========================================================================
 async function onSessionStart() {
-    hitTestSourceRequested = false;
-    hitTestSource = null;
     workspaceLocked = false;
     appState = STATE_DETECTING_SURFACE;
-    if (startActivityBtn) {
-        startActivityBtn.classList.remove('hidden');
+    setActivityUI(false);
+    updateStatus('Escaneando...');
+
+    // Hit-test source é criado uma única vez por sessão (e não dentro do loop)
+    try {
+        const session = renderer.xr.getSession();
+        const viewerSpace = await session.requestReferenceSpace('viewer');
+        hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+    } catch (err) {
+        console.warn('Hit-test indisponível:', err);
+        updateStatus('Hit-test indisponível neste dispositivo');
     }
-    if (helpEl) {
-        helpEl.classList.remove('hidden');
-    }
-    if (hudEl) {
-        hudEl.classList.remove('activity-active');
-    }
-    if (participantIdInput) {
-        participantIdInput.disabled = false;
-    }
-    updateStatus("Escaneando...");
 }
 
 function onSessionEnd() {
+    hitTestSource?.cancel?.();
     hitTestSource = null;
-    hitTestSourceRequested = false;
     workspaceLocked = false;
+    setActivityUI(false);
     if (reticle) reticle.visible = false;
-    if (hudEl) hudEl.classList.remove('activity-active');
-    if (participantIdInput) participantIdInput.disabled = false;
-    updateStatus("—");
-}
-
-function setupReticle() {
-    // Retículo circular para projeção do hit-test na superfície real
-    reticle = new THREE.Mesh(
-        new THREE.RingGeometry(0.045, 0.055, 32).rotateX(-Math.PI / 2),
-        new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide })
-    );
-    reticle.matrixAutoUpdate = false;
-    reticle.visible = false;
-
-    // Ponto central para facilitar a mira
-    const centerDot = new THREE.Mesh(
-        new THREE.CircleGeometry(0.008, 16).rotateX(-Math.PI / 2),
-        new THREE.MeshBasicMaterial({ color: 0x34c759, side: THREE.DoubleSide })
-    );
-    reticle.add(centerDot);
-
-    scene.add(reticle);
-}
-
-// Algoritmo de embaralhamento uniforme Fisher-Yates
-export function shuffle(array) {
-    const arr = [...array];
-    for (let i = arr.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [arr[i], arr[j]] = [arr[j], arr[i]];
-    }
-    return arr;
+    updateStatus('—');
 }
 
 // ===========================================================================
-// 6. SPAWN DE OBJETOS, MESA & ALVO FANTASMA
+// 7. OBJETOS DA CENA
 // ===========================================================================
 export function createDockingCube(colorHex = 0x007aff, isGhost = false) {
     const group = new THREE.Group();
-
-    // Geometria básica do cubo de 7cm
     const boxGeo = new THREE.BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE);
-    const boxMat = new THREE.MeshStandardMaterial({
+
+    group.add(new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({
         color: colorHex,
         roughness: 0.35,
         metalness: 0.15,
         transparent: isGhost,
         opacity: isGhost ? 0.35 : 1.0,
         depthWrite: !isGhost
-    });
-    const cubeMesh = new THREE.Mesh(boxGeo, boxMat);
-    group.add(cubeMesh);
+    })));
 
-    // Hit-box invisível expandida (10.5 cm) para facilitar o toque na tela do smartphone
+    // Hit-box invisível ampliada (10,5 cm) para facilitar o toque
     if (!isGhost) {
-        const hitBoxGeo = new THREE.BoxGeometry(CUBE_SIZE * 1.5, CUBE_SIZE * 1.5, CUBE_SIZE * 1.5);
-        const hitBoxMat = new THREE.MeshBasicMaterial({
-            transparent: true,
-            opacity: 0,
-            depthWrite: false
-        });
-        const hitBox = new THREE.Mesh(hitBoxGeo, hitBoxMat);
-        hitBox.name = "touchHitBox";
+        const hitBox = new THREE.Mesh(
+            new THREE.BoxGeometry(CUBE_SIZE * 1.5, CUBE_SIZE * 1.5, CUBE_SIZE * 1.5),
+            new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })
+        );
+        hitBox.name = 'touchHitBox';
         group.add(hitBox);
     }
 
-    // Contorno (edges) de alto contraste
-    const edgeGeo = new THREE.EdgesGeometry(boxGeo);
-    const edgeMat = new THREE.LineBasicMaterial({
-        color: isGhost ? 0xffffff : 0x111111,
-        transparent: isGhost,
-        opacity: isGhost ? 0.5 : 0.9
-    });
-    const edges = new THREE.LineSegments(edgeGeo, edgeMat);
-    group.add(edges);
+    group.add(new THREE.LineSegments(
+        new THREE.EdgesGeometry(boxGeo),
+        new THREE.LineBasicMaterial({
+            color: isGhost ? 0xffffff : 0x111111,
+            transparent: isGhost,
+            opacity: isGhost ? 0.5 : 0.9
+        })
+    ));
 
-    // Indicador direcional de Yaw no topo (seta apontando para -Z)
-    const arrowGroup = new THREE.Group();
-    const shaftGeo = new THREE.BoxGeometry(CUBE_SIZE * 0.15, 0.003, CUBE_SIZE * 0.45);
-    const headGeo = new THREE.ConeGeometry(CUBE_SIZE * 0.18, CUBE_SIZE * 0.28, 4);
-    headGeo.rotateX(-Math.PI / 2); // Aponta para -Z
-    headGeo.rotateY(Math.PI / 4);
-
+    // Seta de Yaw no topo (aponta para -Z)
     const arrowMat = new THREE.MeshBasicMaterial({
         color: 0xffffff,
         transparent: isGhost,
         opacity: isGhost ? 0.6 : 0.95
     });
+    const headGeo = new THREE.ConeGeometry(CUBE_SIZE * 0.18, CUBE_SIZE * 0.28, 4);
+    headGeo.rotateX(-Math.PI / 2);
+    headGeo.rotateY(Math.PI / 4);
 
-    const shaft = new THREE.Mesh(shaftGeo, arrowMat);
+    const shaft = new THREE.Mesh(
+        new THREE.BoxGeometry(CUBE_SIZE * 0.15, 0.003, CUBE_SIZE * 0.45), arrowMat);
     shaft.position.set(0, CUBE_SIZE / 2 + 0.002, CUBE_SIZE * 0.08);
 
     const head = new THREE.Mesh(headGeo, arrowMat);
     head.position.set(0, CUBE_SIZE / 2 + 0.002, -CUBE_SIZE * 0.2);
 
-    arrowGroup.add(shaft);
-    arrowGroup.add(head);
-    group.add(arrowGroup);
+    group.add(shaft, head);
 
+    // Cache dos meshes "pickáveis" (evita traverse a cada raycast)
+    if (!isGhost) {
+        group.userData.pickMeshes = [];
+        group.traverse((child) => {
+            if (child.isMesh) {
+                child.userData.parentCube = group;
+                group.userData.pickMeshes.push(child);
+            }
+        });
+    }
     return group;
 }
 
-export function placeWorkspace(position) {
-    // 1. Limpa objetos anteriores caso existam
-    if (testCube) {
-        scene.remove(testCube);
-        testCube = null;
-    }
-    if (targetGroup) {
-        scene.remove(targetGroup);
-        targetGroup = null;
-    }
-    candidateObjects.forEach(cube => scene.remove(cube));
+function clearWorkspace() {
+    if (selectedObject) removeSelectionHighlight(selectedObject);
+    [targetGroup, ...candidateObjects].forEach((obj) => {
+        if (!obj) return;
+        scene.remove(obj);
+        disposeObject(obj);
+    });
+    targetGroup = null;
+    targetCube = null;
     candidateObjects = [];
-    if (selectedObject) {
-        removeSelectionHighlight(selectedObject);
-        selectedObject = null;
-    }
-    isDragging = false;
-    isTwisting = false;
+    selectedObject = null;
+    resetGesture();
+}
 
-    // 2. Fixa a altura da mesa e o plano matemático de interseção
-    surfaceY = position.y;
-    tabletopPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -surfaceY);
-    surfacePlaced = true;
-
-    // 3. Escolhe aleatoriamente a cor do alvo fantasma (Vermelho, Verde ou Azul)
+function spawnTarget(position) {
     targetColorIndex = Math.floor(Math.random() * COLORS.length);
-    const targetColor = COLORS[targetColorIndex];
-
-    // 4. Cria o alvo fantasma (translúcido, com rotação de Yaw aleatória)
-    targetGroup = createDockingCube(targetColor.hex, true);
+    targetGroup = createDockingCube(COLORS[targetColorIndex].hex, true);
     targetGroup.position.set(position.x, surfaceY + CUBE_SIZE / 2, position.z);
     targetGroup.rotation.y = Math.random() * Math.PI * 2;
-    // Oculto no treino livre, visível apenas com a atividade iniciada
-    targetGroup.visible = Boolean(workspaceLocked);
+    targetGroup.visible = workspaceLocked; // oculto no treino livre
     scene.add(targetGroup);
+}
 
-    // 5. Instancia os 3 cubos candidatos (Vermelho, Verde, Azul) a ~38 cm do alvo
-    const toCamera = new THREE.Vector3(
-        camera.position.x - position.x,
-        0,
-        camera.position.z - position.z
-    );
-    if (toCamera.lengthSq() < 0.001) {
-        toCamera.set(0, 0, 1);
-    } else {
-        toCamera.normalize();
-    }
+function spawnCandidates(center) {
+    const camPos = getActiveCamera().getWorldPosition(new THREE.Vector3());
+    const toCamera = new THREE.Vector3(camPos.x - center.x, 0, camPos.z - center.z);
+    if (toCamera.lengthSq() < 0.001) toCamera.set(0, 0, 1);
+    else toCamera.normalize();
 
-    // Embaralha as posições das cores usando Fisher-Yates uniforme
-    const shuffledIndices = shuffle([0, 1, 2]);
-    const arcAngles = [-0.55, 0, 0.55]; // Disposição em arco (~ -32°, 0°, +32°)
-    const distance = 0.38; // 38 cm (dentro do intervalo de 30 a 50 cm)
+    const colorOrder = shuffle(COLORS.map((_, i) => i));
 
-    for (let i = 0; i < 3; i++) {
-        const colorIdx = shuffledIndices[i];
-        const colorInfo = COLORS[colorIdx];
-        const cube = createDockingCube(colorInfo.hex, false);
-
-        // Rotaciona o vetor toCamera pelo ângulo do arco
-        const angle = arcAngles[i];
-        const dir = toCamera.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), angle);
+    CANDIDATE_ARC_ANGLES.forEach((angle, i) => {
+        const colorIdx = colorOrder[i];
+        const info = COLORS[colorIdx];
+        const cube = createDockingCube(info.hex, false);
+        const dir = toCamera.clone().applyAxisAngle(UP, angle);
 
         cube.position.set(
-            position.x + dir.x * distance,
+            center.x + dir.x * CANDIDATE_DISTANCE,
             surfaceY + CUBE_SIZE / 2,
-            position.z + dir.z * distance
+            center.z + dir.z * CANDIDATE_DISTANCE
         );
-
-        // Rotação inicial aleatória em torno do eixo vertical (Yaw)
         cube.rotation.y = Math.random() * Math.PI * 2;
-
-        cube.userData = {
+        Object.assign(cube.userData, {
             colorIndex: colorIdx,
-            colorName: colorInfo.name,
-            colorHex: colorInfo.hex,
-            isTarget: (colorIdx === targetColorIndex)   
-        };
+            colorName: info.name,
+            colorHex: info.hex,
+            isTarget: colorIdx === targetColorIndex
+        });
 
-        if (cube.userData.isTarget) targetCube = cube
-
+        if (cube.userData.isTarget) targetCube = cube;
         scene.add(cube);
         candidateObjects.push(cube);
-    }
+    });
+}
 
-    if (!workspaceLocked) {
-        appState = STATE_DETECTING_SURFACE;
-        updateStatus("Superfície detectada | Treino livre: teste os cubos");
-    } else {
+export function placeWorkspace(position) {
+    clearWorkspace();
+
+    surfaceY = position.y;
+    tabletopPlane = new THREE.Plane(UP.clone(), -surfaceY);
+    surfacePlaced = true;
+
+    spawnTarget(position);
+    spawnCandidates(position);
+
+    if (workspaceLocked) {
         appState = STATE_SELECTING_OBJECT;
-        updateStatus(`Trial ${currentTrial}: Alvo ${targetColor.name} | Selecione o cubo`);
+        updateStatus(trialLabel());
+    } else {
+        appState = STATE_DETECTING_SURFACE;
+        updateStatus('Superfície detectada');
     }
 }
 
+/** Posição de ancoragem para recriar o workspace sem mudar a altura da mesa. */
+function getAnchor({ preferReticle = false } = {}) {
+    let pos;
+    if (preferReticle && reticle?.visible) {
+        pos = new THREE.Vector3().setFromMatrixPosition(reticle.matrix);
+    } else if (targetGroup) {
+        pos = targetGroup.position.clone();
+    } else {
+        pos = DEFAULT_ANCHOR.clone();
+    }
+    if (surfacePlaced) pos.y = surfaceY;
+    return pos;
+}
+
+const trialLabel = () =>
+    `Trial ${currentTrial}`;
+
 // ===========================================================================
-// 7. SELEÇÃO DO OBJETO (RAYCAST & PROXIMIDADE)
+// 8. SELEÇÃO
 // ===========================================================================
 function applySelectionHighlight(group) {
-    const oldHighlight = group.getObjectByName("selectionHighlight");
-    if (oldHighlight) group.remove(oldHighlight);
+    group.getObjectByName('selectionHighlight')?.removeFromParent();
 
-    // Anel luminoso ao redor da base do cubo sobre o plano da mesa
-    const ringGeo = new THREE.RingGeometry(CUBE_SIZE * 0.65, CUBE_SIZE * 0.95, 32);
-    ringGeo.rotateX(-Math.PI / 2);
-    const ringMat = new THREE.MeshBasicMaterial({
-        color: 0xffcc00, // Dourado de seleção
-        side: THREE.DoubleSide
-    });
-    const ring = new THREE.Mesh(ringGeo, ringMat);
-    ring.name = "selectionHighlight";
+    const ringGeo = new THREE.RingGeometry(CUBE_SIZE * 0.65, CUBE_SIZE * 0.95, 32).rotateX(-Math.PI / 2);
+    const ring = new THREE.Mesh(
+        ringGeo,
+        new THREE.MeshBasicMaterial({ color: HIGHLIGHT_IDLE, side: THREE.DoubleSide })
+    );
+    ring.name = 'selectionHighlight';
     ring.position.set(0, -CUBE_SIZE / 2 + 0.002, 0);
     group.add(ring);
 
-    // Destaque emissivo nas faces do cubo
-    group.traverse(child => {
-        if (child.isMesh && child.name !== "touchHitBox" && child.material && child.material.emissive) {
-            child.material.emissive = new THREE.Color(0x333333);
-        }
-    });
+    setEmissive(group, 0x333333);
 }
 
 export function removeSelectionHighlight(group) {
     if (!group) return;
-    const oldHighlight = group.getObjectByName("selectionHighlight");
-    if (oldHighlight) {
-        group.remove(oldHighlight);
-        if (oldHighlight.geometry) oldHighlight.geometry.dispose();
-        if (oldHighlight.material) oldHighlight.material.dispose();
+    const ring = group.getObjectByName('selectionHighlight');
+    if (ring) {
+        group.remove(ring);
+        ring.geometry.dispose();
+        ring.material.dispose();
     }
-    group.traverse(child => {
-        if (child.isMesh && child.name !== "touchHitBox" && child.material && child.material.emissive) {
-            child.material.emissive.setHex(0x000000);
+    setEmissive(group, 0x000000);
+}
+
+function setEmissive(group, hex) {
+    group.traverse((child) => {
+        if (child.isMesh && child.name !== 'touchHitBox' && child.material?.emissive) {
+            child.material.emissive.setHex(hex);
         }
     });
 }
 
-export function deselectObject() {
-    if (!selectedObject) return;
-    removeSelectionHighlight(selectedObject);
-    selectedObject = null;
-    isDragging = false;
-    isTwisting = false;
-    touchHasMoved = false;
-    objectSelectedAtTouchStart = false;
-    if (centerReticle) centerReticle.classList.add('hidden');
-    appState = workspaceLocked ? STATE_SELECTING_OBJECT : STATE_DETECTING_SURFACE;
-    if (navigator.vibrate) navigator.vibrate(40);
-    if (!workspaceLocked) {
-        updateStatus("Treino livre: toque em qualquer cubo para testar");
-    } else if (targetColorIndex !== undefined && COLORS[targetColorIndex]) {
-        updateStatus(`Trial ${currentTrial}: Alvo ${COLORS[targetColorIndex].name} | Selecione o cubo`);
-    } else {
-        updateStatus("Selecione o cubo correspondente");
+/** Cubo atingido pelo raio atual do `raycaster` (interseção ou proximidade). */
+function pickCubeFromRay() {
+    const meshes = candidateObjects.flatMap((c) => c.userData.pickMeshes);
+    const hits = raycaster.intersectObjects(meshes, false);
+    if (hits.length > 0) return hits[0].object.userData.parentCube;
+
+    let best = null;
+    let minDist = PICK_PROXIMITY;
+    for (const cube of candidateObjects) {
+        const d = raycaster.ray.distanceToPoint(cube.position);
+        if (d < minDist) {
+            minDist = d;
+            best = cube;
+        }
     }
+    return best;
+}
+
+export function updatePointer(clientX, clientY) {
+    const rect = renderer?.domElement?.getBoundingClientRect();
+    const width = rect?.width || window.innerWidth;
+    const height = rect?.height || window.innerHeight;
+    pointer.x = ((clientX - (rect?.left ?? 0)) / width) * 2 - 1;
+    pointer.y = -((clientY - (rect?.top ?? 0)) / height) * 2 + 1;
+}
+
+function castFromPointer(clientX, clientY) {
+    updatePointer(clientX, clientY);
+    raycaster.setFromCamera(pointer, getActiveCamera());
+}
+
+/** Interseção do raio com a mesa, ou null se atrás/longe demais. */
+function intersectTabletop(ray, maxDistance) {
+    if (!tabletopPlane) return null;
+    const hit = new THREE.Vector3();
+    if (!ray.intersectPlane(tabletopPlane, hit)) return null;
+    if (hit.distanceTo(ray.origin) >= maxDistance) return null;
+    return hit;
+}
+
+function placeOnTable(obj, x, z) {
+    obj.position.set(x, surfaceY + CUBE_SIZE / 2, z);
 }
 
 export function selectCube(cube) {
     if (!cube) return false;
 
     selectedObject = cube;
-    applySelectionHighlight(selectedObject);
-
-    // Feedback tátil de sucesso no celular
+    applySelectionHighlight(cube);
     if (navigator.vibrate) navigator.vibrate([40, 40, 40]);
 
-    if (workspaceLocked) {
-        if (trialStartTime === 0) {
-            trialStartTime = performance.now();
-        }
-        if (!selectedObject.userData.isTarget) {
-            wrongSelections++;
-        }
-    }
+    if (workspaceLocked && !cube.userData.isTarget) metrics.wrongSelections++;
     appState = STATE_MANIPULATING;
+    resetGesture();
 
     if (isTechnique2()) {
-        isDragging = false;
-        isTwisting = false;
-        const activeCamera = getActiveCamera();
-        if (activeCamera) {
-            lastPhoneRoll = getPhoneRoll(activeCamera);
-
-            // Posiciona imediatamente o cubo no centro da mira do celular
-            if (tabletopPlane) {
-                const centerRay = new THREE.Raycaster();
-                centerRay.setFromCamera({ x: 0, y: 0 }, activeCamera);
-                const hitPoint = new THREE.Vector3();
-                if (centerRay.ray.intersectPlane(tabletopPlane, hitPoint)) {
-                    const dist = hitPoint.distanceTo(activeCamera.position);
-                    if (dist < 5.0 && centerRay.ray.direction.y < 0) {
-                        selectedObject.position.x = hitPoint.x;
-                        selectedObject.position.z = hitPoint.z;
-                        selectedObject.position.y = surfaceY + CUBE_SIZE / 2;
-                    }
-                }
-            }
-        }
-        if (centerReticle) centerReticle.classList.remove('hidden');
+        const cam = getActiveCamera();
+        lastPhoneRoll = getPhoneRoll(cam);
+        moveSelectedToScreenCenter(cam);
+        setHidden(centerReticle, false);
     } else {
-        // Técnica 1: Prepara arrasto imediato se o usuário mantiver o dedo na tela
-        if (tabletopPlane) {
-            const hitPoint = new THREE.Vector3();
-            if (raycaster.ray.intersectPlane(tabletopPlane, hitPoint)) {
-                dragOffset.set(
-                    hitPoint.x - selectedObject.position.x,
-                    0,
-                    hitPoint.z - selectedObject.position.z
-                );
-                isDragging = true;
-            }
+        // Técnica 1: prepara arrasto imediato se o dedo continuar na tela
+        const hit = intersectTabletop(raycaster.ray, Infinity);
+        if (hit) {
+            gesture.dragOffset.set(hit.x - cube.position.x, 0, hit.z - cube.position.z);
+            gesture.isDragging = true;
         }
     }
 
@@ -638,326 +561,287 @@ export function selectCube(cube) {
 }
 
 export function handleObjectSelection(clientX, clientY) {
-    updatePointer(clientX, clientY);
-    const activeCamera = getActiveCamera();
-    raycaster.setFromCamera(pointer, activeCamera);
+    castFromPointer(clientX, clientY);
+    const picked = pickCubeFromRay();
+    return picked ? selectCube(picked) : false;
+}
 
-    const meshes = [];
-    candidateObjects.forEach(cube => {
-        cube.traverse(child => {
-            if (child.isMesh) {
-                child.userData.parentCube = cube;
-                meshes.push(child);
-            }
-        });
-    });
+export function deselectObject() {
+    if (!selectedObject) return;
+    removeSelectionHighlight(selectedObject);
+    selectedObject = null;
+    resetGesture();
+    setHidden(centerReticle, true);
+    appState = workspaceLocked ? STATE_SELECTING_OBJECT : STATE_DETECTING_SURFACE;
+    if (navigator.vibrate) navigator.vibrate(40);
 
-    let pickedCube = null;
-    const intersects = raycaster.intersectObjects(meshes, false);
-    if (intersects.length > 0) {
-        pickedCube = intersects[0].object.userData.parentCube;
-    } else {
-        // Tolerância de proximidade para toques em telas touch
-        let minDistance = 0.10;
-        candidateObjects.forEach(cube => {
-            const dist = raycaster.ray.distanceToPoint(cube.position);
-            if (dist < minDistance) {
-                minDistance = dist;
-                pickedCube = cube;
-            }
-        });
+    updateStatus(workspaceLocked
+        ? trialLabel()
+        : 'Treino livre');
+}
+
+/** Seleção por raio do controlador WebXR (toque no ARButton / overlay). */
+function onSelect() {
+    if (!workspaceLocked) {
+        if (reticle?.visible) {
+            placeWorkspace(new THREE.Vector3().setFromMatrixPosition(reticle.matrix));
+            setHidden(startActivityBtn, false);
+        }
+        return;
     }
 
-    if (pickedCube) {
-        return selectCube(pickedCube);
+    if (appState === STATE_SELECTING_OBJECT && controller) {
+        const rot = new THREE.Matrix4().extractRotation(controller.matrixWorld);
+        raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+        raycaster.ray.direction.set(0, 0, -1).applyMatrix4(rot);
+
+        const picked = pickCubeFromRay();
+        if (picked) selectCube(picked);
     }
-    return false;
 }
 
 // ===========================================================================
-// 8. TÉCNICA 1: TOUCH GESTURES (BASELINE)
+// 9. TÉCNICA 1 – GESTOS TOUCH
 // ===========================================================================
 function setupTouchGestures() {
-    // 1. EVENTOS TOUCH (Mobile: arrasto com 1 dedo e torção/yaw com 2 dedos)
     window.addEventListener('touchstart', onTouchStart, { passive: false });
     window.addEventListener('touchmove', onTouchMove, { passive: false });
     window.addEventListener('touchend', onTouchEnd);
     window.addEventListener('touchcancel', onTouchEnd);
-
-    // Evita abrir menu de contexto ao usar botão direito para rotação
     window.addEventListener('contextmenu', (e) => {
-        if (appState === STATE_MANIPULATING) {
-            e.preventDefault();
-        }
+        if (appState === STATE_MANIPULATING) e.preventDefault();
     });
 }
 
-let touchStartX = 0;
-let touchStartY = 0;
-let touchStartTime = 0;
-let touchHasMoved = false;
-let objectSelectedAtTouchStart = false;
+/** Ignora toques na UI e na zona de segurança do HUD. */
+function shouldIgnoreTouch(event) {
+    if (event.target.closest(UI_SELECTOR)) return true;
+    const touch = event.touches[0];
+    if (hudEl && touch) {
+        return touch.clientY <= hudEl.getBoundingClientRect().bottom + HUD_SAFE_MARGIN_PX;
+    }
+    return false;
+}
 
 function onTouchStart(event) {
-    if (event.target.closest('#hud') || event.target.closest('button') || event.target.closest('select') || event.target.closest('input') || event.target.closest('#fatigueModal')) {
-        return;
-    }
-
-    // Safezone do cabeçalho: ignora toques na zona superior / notch / margem do HUD
-    if (hudEl && event.touches[0]) {
-        const hudRect = hudEl.getBoundingClientRect();
-        if (event.touches[0].clientY <= hudRect.bottom + 12) {
-            return;
-        }
-    }
-
+    if (shouldIgnoreTouch(event)) return;
     event.preventDefault();
 
-    // Incrementa touchCount apenas durante a execução da tarefa (seleção e manipulação)
-    if (workspaceLocked && (appState === STATE_SELECTING_OBJECT || appState === STATE_MANIPULATING)) {
-        touchCount++;
-    }
+    if (isTaskRunning()) metrics.touchCount++;
 
     if (event.touches.length === 1) {
-        const touch = event.touches[0];
-        touchStartX = touch.clientX;
-        touchStartY = touch.clientY;
-        touchStartTime = performance.now();
-        touchHasMoved = false;
-        objectSelectedAtTouchStart = (selectedObject !== null && appState === STATE_MANIPULATING);
+        beginSingleTouch(event.touches[0]);
+    } else if (event.touches.length === 2 && canManipulateWithTouch()) {
+        const [t1, t2] = event.touches;
+        gesture.isDragging = false;
+        gesture.isTwisting = true;
+        gesture.hasMoved = true;
+        gesture.lastAngle = Math.atan2(t2.clientY - t1.clientY, t2.clientX - t1.clientX);
+    }
+}
 
-        if (appState === STATE_SELECTING_OBJECT || (!workspaceLocked && appState === STATE_DETECTING_SURFACE)) {
-            const selected = handleObjectSelection(touch.clientX, touch.clientY);
-            if (!selected && !workspaceLocked && appState === STATE_DETECTING_SURFACE) {
-                onSelect();
-            }
-        } else if (appState === STATE_MANIPULATING && selectedObject && tabletopPlane && !isTechnique2()) {
-            updatePointer(touch.clientX, touch.clientY);
-            const activeCamera = getActiveCamera();
-            raycaster.setFromCamera(pointer, activeCamera);
+const canManipulateWithTouch = () =>
+    appState === STATE_MANIPULATING && selectedObject && !isTechnique2();
 
-            const hitPoint = new THREE.Vector3();
-            if (raycaster.ray.intersectPlane(tabletopPlane, hitPoint)) {
-                if (!activeCamera || hitPoint.distanceTo(activeCamera.position) < 3.0) {
-                    dragOffset.set(
-                        hitPoint.x - selectedObject.position.x,
-                        0,
-                        hitPoint.z - selectedObject.position.z
-                    );
-                    isDragging = false;
-                    isTwisting = false;
-                }
-            }
+function beginSingleTouch(touch) {
+    gesture.startX = touch.clientX;
+    gesture.startY = touch.clientY;
+    gesture.startTime = performance.now();
+    gesture.hasMoved = false;
+    gesture.selectedAtStart = canManipulateWithTouch() || (selectedObject !== null && appState === STATE_MANIPULATING);
+
+    const canSelect = appState === STATE_SELECTING_OBJECT ||
+        (!workspaceLocked && appState === STATE_DETECTING_SURFACE);
+
+    if (canSelect) {
+        const selected = handleObjectSelection(touch.clientX, touch.clientY);
+        if (!selected && !workspaceLocked) onSelect(); // reposiciona a mesa
+    } else if (canManipulateWithTouch() && tabletopPlane) {
+        castFromPointer(touch.clientX, touch.clientY);
+        const hit = intersectTabletop(raycaster.ray, MAX_RAY_DISTANCE_TOUCH);
+        if (hit) {
+            gesture.dragOffset.set(
+                hit.x - selectedObject.position.x, 0, hit.z - selectedObject.position.z);
+            gesture.isDragging = false;
+            gesture.isTwisting = false;
         }
-    } else if (event.touches.length === 2 && appState === STATE_MANIPULATING && selectedObject && !isTechnique2()) {
-        isDragging = false;
-        isTwisting = true;
-        touchHasMoved = true;
-
-        const t1 = event.touches[0];
-        const t2 = event.touches[1];
-        lastTouchAngle = Math.atan2(t2.clientY - t1.clientY, t2.clientX - t1.clientX);
     }
 }
 
 function onTouchMove(event) {
-    if (event.target.closest('#hud') || event.target.closest('button') || event.target.closest('select') || event.target.closest('input')) {
-        return;
-    }
-
-    if (hudEl && event.touches[0]) {
-        const hudRect = hudEl.getBoundingClientRect();
-        if (event.touches[0].clientY <= hudRect.bottom + 12) {
-            return;
-        }
-    }
-
+    if (shouldIgnoreTouch(event)) return;
     event.preventDefault();
 
-    // Na Técnica 2, a translação e rotação são controladas pelo movimento do celular
-    if (isTechnique2()) {
-        return;
+    // Técnica 2: movimento controlado pelo celular, não pelo toque
+    if (isTechnique2() || !selectedObject || appState !== STATE_MANIPULATING) return;
+
+    if (event.touches.length === 1) dragSelected(event.touches[0]);
+    else if (event.touches.length === 2 && gesture.isTwisting) twistSelected(event.touches);
+}
+
+function dragSelected(touch) {
+    if (!tabletopPlane) return;
+
+    const dx = touch.clientX - gesture.startX;
+    const dy = touch.clientY - gesture.startY;
+    if (!gesture.hasMoved && dx * dx + dy * dy >= DRAG_THRESHOLD_PX ** 2) {
+        gesture.hasMoved = true;
+        gesture.isDragging = true;
     }
+    if (!gesture.isDragging) return;
 
-    if (event.touches.length === 1 && selectedObject && appState === STATE_MANIPULATING && tabletopPlane) {
-        const touch = event.touches[0];
-        const dx = touch.clientX - touchStartX;
-        const dy = touch.clientY - touchStartY;
-        if (!touchHasMoved && (dx * dx + dy * dy >= 64)) {
-            touchHasMoved = true;
-            isDragging = true;
-        }
-
-        if (isDragging) {
-            updatePointer(touch.clientX, touch.clientY);
-            const activeCamera = getActiveCamera();
-            raycaster.setFromCamera(pointer, activeCamera);
-
-            const hitPoint = new THREE.Vector3();
-            if (raycaster.ray.intersectPlane(tabletopPlane, hitPoint)) {
-                if (!activeCamera || hitPoint.distanceTo(activeCamera.position) < 3.0) {
-                    selectedObject.position.x = hitPoint.x - dragOffset.x;
-                    selectedObject.position.z = hitPoint.z - dragOffset.z;
-                    selectedObject.position.y = surfaceY + CUBE_SIZE / 2;
-                    checkDockingTolerance();
-                }
-            }
-        }
-    } else if (event.touches.length === 2 && isTwisting && selectedObject && appState === STATE_MANIPULATING) {
-        const t1 = event.touches[0];
-        const t2 = event.touches[1];
-        const currentTouchAngle = Math.atan2(t2.clientY - t1.clientY, t2.clientX - t1.clientX);
-        let deltaAngle = currentTouchAngle - lastTouchAngle;
-
-        // Normalização contínua de deltaAngle em [-PI, PI] para evitar saltos bruscos
-        while (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2;
-        while (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2;
-
-        selectedObject.rotation.y -= deltaAngle;
-        lastTouchAngle = currentTouchAngle;
+    castFromPointer(touch.clientX, touch.clientY);
+    const hit = intersectTabletop(raycaster.ray, MAX_RAY_DISTANCE_TOUCH);
+    if (hit) {
+        placeOnTable(selectedObject, hit.x - gesture.dragOffset.x, hit.z - gesture.dragOffset.z);
         checkDockingTolerance();
     }
 }
 
+function twistSelected([t1, t2]) {
+    const angle = Math.atan2(t2.clientY - t1.clientY, t2.clientX - t1.clientX);
+    selectedObject.rotation.y -= normalizeAngle(angle - gesture.lastAngle);
+    gesture.lastAngle = angle;
+    checkDockingTolerance();
+}
+
 function onTouchEnd(event) {
     if (event.touches.length === 0) {
-        const duration = performance.now() - touchStartTime;
-        // Se começou o toque com objeto selecionado e foi um toque rápido sem arrasto -> Tap de Deseleção ou Troca
-        if (objectSelectedAtTouchStart && selectedObject && !touchHasMoved && duration < 450) {
-            handleTapDeselectionOrSwitch(touchStartX, touchStartY);
-        }
-        isDragging = false;
-        isTwisting = false;
-        touchHasMoved = false;
-        objectSelectedAtTouchStart = false;
-    } else if (event.touches.length === 1 && isTwisting) {
-        isTwisting = false;
-        isDragging = false;
+        const isTap = gesture.selectedAtStart && selectedObject && !gesture.hasMoved &&
+            performance.now() - gesture.startTime < TAP_MAX_MS;
+        if (isTap) handleTapOnSelection(gesture.startX, gesture.startY);
+        resetGesture();
+    } else if (event.touches.length === 1 && gesture.isTwisting) {
+        gesture.isTwisting = false;
+        gesture.isDragging = false;
     }
 }
 
-function handleTapDeselectionOrSwitch(clientX, clientY) {
-    updatePointer(clientX, clientY);
-    const activeCamera = getActiveCamera();
-    raycaster.setFromCamera(pointer, activeCamera);
+/** Tap rápido com objeto selecionado: deseleciona ou troca de cubo. */
+function handleTapOnSelection(x, y) {
+    const previous = selectedObject;
+    castFromPointer(x, y);
+    const picked = pickCubeFromRay();
 
-    const meshes = [];
-    candidateObjects.forEach(cube => {
-        cube.traverse(child => {
-            if (child.isMesh) {
-                child.userData.parentCube = cube;
-                meshes.push(child);
-            }
-        });
-    });
-
-    let pickedCube = null;
-    const intersects = raycaster.intersectObjects(meshes, false);
-    if (intersects.length > 0) {
-        pickedCube = intersects[0].object.userData.parentCube;
-    } else {
-        let minDistance = 0.10;
-        candidateObjects.forEach(cube => {
-            const dist = raycaster.ray.distanceToPoint(cube.position);
-            if (dist < minDistance) {
-                minDistance = dist;
-                pickedCube = cube;
-            }
-        });
-    }
-
-    if (!pickedCube || pickedCube === selectedObject) {
-        // Toque no próprio objeto selecionado ou no vazio/mesa -> Deseleciona
-        deselectObject();
-    } else {
-        // Toque em outro cubo candidato -> Troca de seleção
-        deselectObject();
-        selectCube(pickedCube);
-    }
+    deselectObject();
+    if (picked && picked !== previous) selectCube(picked);
 }
 
 // ===========================================================================
-// 10. AVALIAÇÃO DE TOLERÂNCIA DE DOCKING (3 DoF: X, Z, YAW)
+// 10. TÉCNICA 2 – RAYCAST CENTRAL + CELULAR COMO VOLANTE
 // ===========================================================================
-export function checkDockingTolerance() {
-    if (!selectedObject || !targetGroup) {
-        return { inTolerance: false, posErrorCm: 0, yawErrorDeg: 0 };
-    }
+function moveSelectedToScreenCenter(cam) {
+    if (!cam || !selectedObject) return;
+    raycaster.setFromCamera(SCREEN_CENTER, cam);
+    if (raycaster.ray.direction.y >= 0) return; // só aceita raios apontando para baixo
+    const hit = intersectTabletop(raycaster.ray, MAX_RAY_DISTANCE_T2);
+    if (hit) placeOnTable(selectedObject, hit.x, hit.z);
+}
 
-    // Se o alvo fantasma não estiver visível (modo de treino livre antes de iniciar a atividade)
-    if (!targetGroup.visible || !workspaceLocked) {
-        updateStatus(`Treino livre (${selectedObject.userData.colorName}) | Inicie a atividade quando estiver pronto`);
-        return { inTolerance: false, posErrorCm: 0, yawErrorDeg: 0 };
-    }
+function updateTechnique2() {
+    if (!isTechnique2() || appState !== STATE_MANIPULATING || !selectedObject || !tabletopPlane) return;
+    const cam = getActiveCamera();
+    if (!cam) return;
 
-    if (!targetCube) {
-        return { inTolerance: false, posErrorCm: 0, yawErrorDeg: 0 };
-    }
+    moveSelectedToScreenCenter(cam);
 
-    // 1. Erro de translação no plano horizontal XZ (em cm)
+    const roll = getPhoneRoll(cam);
+    selectedObject.rotation.y += normalizeAngle(roll - lastPhoneRoll) * ROTATION_GAIN_TECHNIQUE2;
+    lastPhoneRoll = roll;
+
+    checkDockingTolerance();
+}
+
+// ===========================================================================
+// 11. TOLERÂNCIA DE DOCKING (X, Z, YAW)
+// ===========================================================================
+/** Cálculo puro dos erros do cubo-alvo em relação ao fantasma. */
+function computeDockingError() {
+    if (!targetCube || !targetGroup) return null;
+
     const dx = (targetCube.position.x - targetGroup.position.x) * 100;
     const dz = (targetCube.position.z - targetGroup.position.z) * 100;
-    const posErrorCm = Math.sqrt(dx * dx + dz * dz);
+    const posErrorCm = Math.hypot(dx, dz);
 
-    // 2. Erro de rotação em torno do eixo vertical Yaw (em graus [0, 180])
-    let yawDiff = (targetCube.rotation.y - targetGroup.rotation.y) % (Math.PI * 2);
-    while (yawDiff > Math.PI) yawDiff -= Math.PI * 2;
-    while (yawDiff < -Math.PI) yawDiff += Math.PI * 2;
-    const yawErrorDeg = Math.abs(yawDiff * 180 / Math.PI);
+    const yawDiff = normalizeAngle(targetCube.rotation.y - targetGroup.rotation.y);
+    const yawErrorDeg = Math.abs(THREE.MathUtils.radToDeg(yawDiff));
 
-    // 3. Verificação de tolerância (2 cm e 10 graus)
-    const inTolerance = (posErrorCm <= TOLERANCE_POS_CM && yawErrorDeg <= TOLERANCE_YAW_DEG);
+    return {
+        posErrorCm,
+        yawErrorDeg,
+        inTolerance: posErrorCm <= TOLERANCE_POS_CM && yawErrorDeg <= TOLERANCE_YAW_DEG
+    };
+}
 
-    // 4. Feedback no HUD superior
-    updateStatus(`Δpos: ${posErrorCm.toFixed(1)}cm | Δyaw: ${yawErrorDeg.toFixed(0)}°`, inTolerance);
+export function checkDockingTolerance() {
+    const empty = { inTolerance: false, posErrorCm: 0, yawErrorDeg: 0 };
+    if (!selectedObject || !targetGroup) return empty;
 
-    // 5. Feedback no objeto selecionado (anel fica verde quando encaixado)
-    const highlight = selectedObject.getObjectByName("selectionHighlight");
-    if (highlight) {
-        highlight.material.color.setHex(inTolerance ? 0x34c759 : 0xffcc00);
+    if (!workspaceLocked || !targetGroup.visible) {
+        updateStatus(`Treino livre (${selectedObject.userData.colorName})`);
+        return empty;
     }
 
-    return { inTolerance, posErrorCm, yawErrorDeg };
+    const result = computeDockingError();
+    if (!result) return empty;
+
+    updateStatus(
+        `Δpos: ${result.posErrorCm.toFixed(1)}cm | Δyaw: ${result.yawErrorDeg.toFixed(0)}°`,
+        result.inTolerance
+    );
+
+    const ring = selectedObject.getObjectByName('selectionHighlight');
+    ring?.material.color.setHex(result.inTolerance ? HIGHLIGHT_OK : HIGHLIGHT_IDLE);
+
+    return result;
+}
+
+// ===========================================================================
+// 12. FLUXO DA ATIVIDADE
+// ===========================================================================
+export function lockWorkspace() {
+    workspaceLocked = true;
+    currentTrial = 1;
+    blockStartIndex = csvRows.length;
+    lastTrackingState = true;
+
+    placeWorkspace(getAnchor());
+    setActivityUI(true);
+    resetMetrics();
+
+    appState = STATE_SELECTING_OBJECT;
+    updateStatus(trialLabel());
 }
 
 export function resetToInitialState() {
-    currentTrial = 1;
+    const anchor = getAnchor({ preferReticle: true });
+
+    if (selectedObject) deselectObject();
     workspaceLocked = false;
+    currentTrial = 1;
     appState = STATE_DETECTING_SURFACE;
     trialStartTime = 0;
-    wrongSelections = 0;
-    touchCount = 0;
-    trackingLostCount = 0;
+    metrics.wrongSelections = 0;
+    metrics.touchCount = 0;
+    metrics.trackingLost = 0;
 
-    if (selectedObject) {
-        deselectObject();
-    }
-    if (centerReticle) {
-        centerReticle.classList.add('hidden');
-    }
-    if (startActivityBtn) {
-        startActivityBtn.classList.remove('hidden');
-    }
-    if (confirmBtn) {
-        confirmBtn.style.display = '';
-    }
-    if (helpEl) {
-        helpEl.classList.remove('hidden');
-    }
-    if (hudEl) {
-        hudEl.classList.remove('activity-active');
-    }
-    if (participantIdInput) {
-        participantIdInput.disabled = false;
-    }
+    setActivityUI(false);
+    placeWorkspace(anchor);
+}
 
-    const pos = (reticle && reticle.visible) ?
-        new THREE.Vector3().setFromMatrixPosition(reticle.matrix) :
-        (targetGroup ? targetGroup.position.clone() : new THREE.Vector3(0, surfaceY || -0.15, -0.7));
-    if (surfacePlaced) {
-        pos.y = surfaceY;
-    }
-    placeWorkspace(pos);
+function recordTrial({ posErrorCm, yawErrorDeg }) {
+    csvRows.push({
+        participant_id: getParticipantId(),
+        technique: getTechniqueName(),
+        trial: currentTrial,
+        completion_time_s: +(trialStartTime > 0 ? (performance.now() - trialStartTime) / 1000 : 0).toFixed(3),
+        pos_error_cm: +posErrorCm.toFixed(2),
+        yaw_error_deg: +yawErrorDeg.toFixed(1),
+        wrong_selections: metrics.wrongSelections,
+        touch_count: metrics.touchCount,
+        tracking_lost: metrics.trackingLost,
+        arm_fatigue: '' // preenchido após a avaliação do bloco
+    });
 }
 
 export function confirmTrial() {
@@ -967,307 +851,155 @@ export function confirmTrial() {
         updateStatus("Inicie primeiro a atividade clicando em 'Iniciar atividade'!");
         return;
     }
-
     if (appState !== STATE_MANIPULATING) {
-        updateStatus("Selecione primeiro o cubo correspondente!");
+        updateStatus('Selecione primeiro o cubo correspondente!');
         return;
     }
 
-    const { posErrorCm, yawErrorDeg } = checkDockingTolerance();
-    const completionTimeS = trialStartTime > 0 ? (performance.now() - trialStartTime) / 1000 : 0;
-    const participantId = participantIdInput ? participantIdInput.value.trim() : "P01";
-    const currentTechnique = (mappingSelect && mappingSelect.value === "2") ? "technique2" : "touch";
+    // Erro calculado sem efeitos colaterais de UI
+    const errors = computeDockingError() ?? { posErrorCm: 0, yawErrorDeg: 0 };
+    recordTrial(errors);
 
-    // Registra métricas da tentativa
-    csvRows.push({
-        participant_id: participantId,
-        technique: currentTechnique,
-        trial: currentTrial,
-        completion_time_s: parseFloat(completionTimeS.toFixed(3)),
-        pos_error_cm: parseFloat(posErrorCm.toFixed(2)),
-        yaw_error_deg: parseFloat(yawErrorDeg.toFixed(1)),
-        wrong_selections: wrongSelections,
-        touch_count: touchCount,
-        tracking_lost: trackingLostCount,
-        arm_fatigue: lastArmFatigue ?? ""
-    });
-
-    if (centerReticle) centerReticle.classList.add('hidden');
+    setHidden(centerReticle, true);
+    if (selectedObject) removeSelectionHighlight(selectedObject);
     selectedObject = null;
+    resetGesture();
 
-    if (currentTrial < 3) {
+    if (currentTrial < MAX_TRIALS) {
         currentTrial++;
-
-        // Reset das métricas para o próximo trial e início do timer
-        wrongSelections = 0;
-        touchCount = 0;
-        trackingLostCount = 0;
-        trialStartTime = performance.now();
-
-        // Reposiciona novo alvo e cubos no mesmo plano da mesa
-        const currentPos = targetGroup ? targetGroup.position.clone() : new THREE.Vector3(0, surfaceY, -0.7);
-        currentPos.y = surfaceY;
-        placeWorkspace(currentPos);
-
-        workspaceLocked = true;
-        if (startActivityBtn) startActivityBtn.classList.add('hidden');
-        if (reticle) reticle.visible = false;
-        appState = STATE_SELECTING_OBJECT;
-        updateStatus(`Trial ${currentTrial}: Alvo ${COLORS[targetColorIndex].name} | Selecione o cubo`);
+        resetMetrics();
+        placeWorkspace(getAnchor()); // workspaceLocked continua true
+        setActivityUI(true);
     } else {
-        // Concluiu os 3 trials: reseta para o estado inicial e exibe o botão começar atividade
         resetToInitialState();
-        updateStatus("3 trials concluídos! Avalie a fadiga.");
+        updateStatus('3 trials concluídos! Avalie a fadiga.');
         showFatigueModal();
     }
 }
 
 export function showFatigueModal() {
-    if (fatigueModal) {
-        const titleSpan = fatigueModal.querySelector('span');
-        if (titleSpan) {
-            titleSpan.textContent = `Fim da Técnica ${mappingSelect ? mappingSelect.value : "1"}! Quão cansados estão seus braços?`;
-        }
-        fatigueModal.classList.remove('hidden');
+    if (!fatigueModal) return;
+    const title = fatigueModal.querySelector('span');
+    if (title) {
+        title.textContent = `Fim da Técnica ${mappingSelect?.value ?? '1'}! Quão cansados estão seus braços?`;
     }
+    fatigueModal.classList.remove('hidden');
 }
 
 export function handleFatigueRating(rating) {
-    lastArmFatigue = parseInt(rating, 10);
-    // Aplica a nota de fadiga a todas as linhas do participante
-    csvRows.forEach(row => {
-        row.arm_fatigue = lastArmFatigue;
-    });
-
-    if (fatigueModal) fatigueModal.classList.add('hidden');
-    if (startActivityBtn) startActivityBtn.classList.remove('hidden');
-    updateStatus("Fadiga registrada! Inicie nova atividade.");
+    const value = parseInt(rating, 10);
+    // Aplica somente às linhas do bloco recém-concluído (não sobrescreve outras técnicas)
+    for (let i = blockStartIndex; i < csvRows.length; i++) {
+        csvRows[i].arm_fatigue = value;
+    }
+    setHidden(fatigueModal, true);
+    setHidden(startActivityBtn, false);
+    updateStatus('Fadiga registrada! Inicie nova atividade.');
 }
 
 // ===========================================================================
-// 11. INSTRUMENTAÇÃO, CSV & INTERFACE
+// 13. EVENTOS DE UI & CSV
 // ===========================================================================
+function bindPress(el, handler) {
+    if (!el) return;
+    el.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        handler(e);
+    });
+}
+
 function setupEventListeners() {
-    const handleStartActivity = (e) => {
-        if (e) {
-            e.preventDefault();
-            e.stopPropagation();
-        }
-        if (fatigueModal) {
-            fatigueModal.classList.add('hidden');
-        }
+    bindPress(startActivityBtn, () => {
+        setHidden(fatigueModal, true);
         lockWorkspace();
-    };
-    if (startActivityBtn) {
-        startActivityBtn.addEventListener('click', handleStartActivity);
-        startActivityBtn.addEventListener('touchend', handleStartActivity);
-    }
+    });
+    bindPress(confirmBtn, confirmTrial);
+    bindPress(downloadBtn, exportCSV);
 
-    const handleReconfig = (e) => {
-        if (e) {
-            e.preventDefault();
-            e.stopPropagation();
-        }
-        resetToInitialState();
-        updateStatus(reticle && reticle.visible ? "Superfície detectada" : "Escaneando...");
-    };
+    fatigueButtons?.querySelectorAll('button').forEach((btn) => {
+        bindPress(btn, () => handleFatigueRating(btn.getAttribute('data-rating')));
+    });
 
-    const handleConfirm = (e) => {
-        if (e) {
-            e.preventDefault();
-            e.stopPropagation();
-        }
-        confirmTrial();
-    };
-    if (confirmBtn) {
-        confirmBtn.addEventListener('click', handleConfirm);
-        confirmBtn.addEventListener('touchend', handleConfirm);
-    }
-
-    const handleDownload = (e) => {
-        if (e) {
-            e.preventDefault();
-            e.stopPropagation();
-        }
-        exportCSV();
-    };
-    if (downloadBtn) {
-        downloadBtn.addEventListener('click', handleDownload);
-        downloadBtn.addEventListener('touchend', handleDownload);
-    }
-
-    if (fatigueButtons) {
-        fatigueButtons.querySelectorAll('button').forEach(btn => {
-            const onRating = (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                const rating = btn.getAttribute('data-rating');
-                handleFatigueRating(rating);
-            };
-            btn.addEventListener('click', onRating);
-            btn.addEventListener('touchend', onRating);
-        });
-    }
-
-    function updateHelpText() {
+    const updateHelpText = () => {
         if (!helpEl) return;
-        if (isTechnique2()) {
-            helpEl.textContent = "Técnica 2: Toque no cubo para selecionar. Mova o celular para posicionar. Gire o celular como um volante para rotacionar. Confirm registra o trial.";
-        } else {
-            helpEl.textContent = "Técnica 1: Toque para selecionar. 1 dedo arrasta, 2 dedos giram. Toque fora para deselecionar. Confirm registra o trial.";
-        }
-    }
-    if (mappingSelect) {
-        mappingSelect.addEventListener('change', updateHelpText);
-    }
+        helpEl.textContent = isTechnique2()
+            ? 'Técnica 2: Toque no cubo para selecionar. Mova o celular para posicionar. Gire o celular como um volante para rotacionar. Confirm registra o trial.'
+            : 'Técnica 1: Toque para selecionar. 1 dedo arrasta, 2 dedos giram. Toque fora para deselecionar. Confirm registra o trial.';
+    };
+    mappingSelect?.addEventListener('change', updateHelpText);
     updateHelpText();
 
-    window.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter') {
-            confirmTrial();
-        } else if (event.key === 'Escape') {
-            deselectObject();
-        }
+    window.addEventListener('keydown', (e) => {
+        if (e.target.closest?.('input, select, textarea')) return; // não dispara ao digitar o ID
+        if (e.key === 'Enter') confirmTrial();
+        else if (e.key === 'Escape') deselectObject();
     });
 }
 
-export function updateStatus(text, inTolerance = false) {
-    if (statusEl) {
-        statusEl.textContent = text;
-        if (inTolerance) {
-            statusEl.classList.add("in-tolerance");
-        } else {
-            statusEl.classList.remove("in-tolerance");
-        }
-    }
-}
+const csvEscape = (v) => {
+    const s = String(v ?? '');
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
 
 export function exportCSV() {
-    if (csvRows.length === 0) {
-        alert("Nenhum dado registrado para download ainda.");
+    const pId = getParticipantId();
+    const tech = getTechniqueName();
+    const rows = csvRows.filter((r) => r.participant_id === pId && r.technique === tech);
+
+    if (rows.length === 0) {
+        alert('Nenhum dado registrado para este participante/técnica ainda.');
         return;
     }
 
-    let csvContent = CSV_HEADER.join(",") + "\n";
-    csvRows.forEach(row => {
-        const line = CSV_HEADER.map(field => row[field] ?? "").join(",");
-        csvContent += line + "\n";
-    });
+    const lines = [CSV_HEADER.join(',')];
+    rows.forEach((row) => lines.push(CSV_HEADER.map((f) => csvEscape(row[f])).join(',')));
 
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    const pId = participantIdInput ? participantIdInput.value.trim() : "P01";
-    const tech = (mappingSelect && mappingSelect.value === "2") ? "technique2" : "touch";
-    link.setAttribute("href", url);
-    link.setAttribute("download", `${pId}-${tech}.csv`);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${pId}-${tech}.csv`;
     document.body.appendChild(link);
     link.click();
-    document.body.removeChild(link);
+    link.remove();
+    URL.revokeObjectURL(url);
 }
 
 // ===========================================================================
-// 12. LOOP DE RENDERIZAÇÃO
+// 14. LOOP DE RENDERIZAÇÃO
 // ===========================================================================
+function updateTracking(frame, referenceSpace) {
+    const pose = frame.getViewerPose(referenceSpace);
+    const trackingOk = Boolean(pose && !pose.emulatedPosition);
+
+    if (isTaskRunning() && lastTrackingState && !trackingOk) metrics.trackingLost++;
+    lastTrackingState = trackingOk;
+}
+
+function updateHitTest(frame, referenceSpace) {
+    if (workspaceLocked || !hitTestSource) {
+        if (reticle) reticle.visible = false;
+        return;
+    }
+
+    const pose = frame.getHitTestResults(hitTestSource)[0]?.getPose(referenceSpace);
+    reticle.visible = Boolean(pose);
+    if (pose) reticle.matrix.fromArray(pose.transform.matrix);
+
+    if (appState === STATE_DETECTING_SURFACE) {
+        updateStatus(pose ? 'Superfície detectada' : 'Escaneando...');
+    }
+}
+
 function render(timestamp, frame) {
     if (frame) {
         const referenceSpace = renderer.xr.getReferenceSpace();
-        const session = renderer.xr.getSession();
-
-        // 1. Monitoramento do rastreamento do dispositivo via getViewerPose
-        const viewerPose = frame.getViewerPose(referenceSpace);
-        const trackingOk = Boolean(viewerPose && !viewerPose.emulatedPosition);
-
-        // Contabiliza tracking_lost apenas durante a execução da tarefa
-        if (workspaceLocked && (appState === STATE_SELECTING_OBJECT || appState === STATE_MANIPULATING)) {
-            if (!trackingOk && lastTrackingState) {
-                trackingLostCount++;
-                lastTrackingState = false;
-            } else if (trackingOk && !lastTrackingState) {
-                lastTrackingState = true;
-            }
-        } else {
-            lastTrackingState = trackingOk;
-        }
-
-        // 2. Hit-test para posicionamento da mesa
-        if (hitTestSourceRequested === false) {
-            session.requestReferenceSpace('viewer').then(function (referenceSpace) {
-                session.requestHitTestSource({ space: referenceSpace }).then(function (source) {
-                    hitTestSource = source;
-                });
-            });
-
-            session.addEventListener('end', function () {
-                hitTestSourceRequested = false;
-                hitTestSource = null;
-                if (reticle) reticle.visible = false;
-                updateStatus("—");
-            });
-
-            hitTestSourceRequested = true;
-        }
-
-        if (!workspaceLocked && hitTestSource) {
-            const hitTestResults = frame.getHitTestResults(hitTestSource);
-
-            if (hitTestResults.length > 0) {
-                const hit = hitTestResults[0];
-                const pose = hit.getPose(referenceSpace);
-
-                if (pose) {
-                    if (reticle) {
-                        reticle.visible = true;
-                        reticle.matrix.fromArray(pose.transform.matrix);
-                    }
-                    if (appState === STATE_DETECTING_SURFACE) {
-                        updateStatus("Superfície detectada");
-                    }
-                } else if (reticle) {
-                    reticle.visible = false;
-                }
-            } else {
-                if (reticle) reticle.visible = false;
-                if (appState === STATE_DETECTING_SURFACE) {
-                    updateStatus("Escaneando...");
-                }
-            }
-        } else if (reticle) {
-            reticle.visible = false;
-        }
+        updateTracking(frame, referenceSpace);
+        updateHitTest(frame, referenceSpace);
     }
 
-    // 3. Atualização contínua da Técnica 2: Raycast Central e Rotação pelo Movimento do Celular
-    if (isTechnique2() && appState === STATE_MANIPULATING && selectedObject && tabletopPlane) {
-        const activeCamera = getActiveCamera();
-        if (activeCamera) {
-            // Translação: Raycast emitido do centro exato da tela (0, 0)
-            raycaster.setFromCamera({ x: 0, y: 0 }, activeCamera);
-            const hitPoint = new THREE.Vector3();
-            if (raycaster.ray.intersectPlane(tabletopPlane, hitPoint)) {
-                const dist = hitPoint.distanceTo(activeCamera.position);
-                // Valida se o raio aponta para a mesa e em distância plausível (< 5 metros)
-                if (dist < 5.0 && raycaster.ray.direction.y < 0) {
-                    selectedObject.position.x = hitPoint.x;
-                    selectedObject.position.z = hitPoint.z;
-                    selectedObject.position.y = surfaceY + CUBE_SIZE / 2;
-                }
-            }
-
-            // Rotação: Mapeamento tipo Volante com ganho (Roll do celular rotaciona o Yaw do cubo)
-            const currentPhoneRoll = getPhoneRoll(activeCamera);
-            let deltaRoll = currentPhoneRoll - lastPhoneRoll;
-            while (deltaRoll > Math.PI) deltaRoll -= Math.PI * 2;
-            while (deltaRoll < -Math.PI) deltaRoll += Math.PI * 2;
-
-            selectedObject.rotation.y += deltaRoll * ROTATION_GAIN_TECHNIQUE2;
-            lastPhoneRoll = currentPhoneRoll;
-
-            // Feedback imediato no HUD e no anel de tolerância
-            checkDockingTolerance();
-        }
-    }
-
+    updateTechnique2();
     renderer.render(scene, camera);
 }
 
