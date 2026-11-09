@@ -205,7 +205,9 @@ export function updatePointer(clientX, clientY) {
 
 export function lockWorkspace() {
     workspaceLocked = true;
+    currentTrial = 1;
     if (startActivityBtn) startActivityBtn.classList.add('hidden');
+    if (confirmBtn) confirmBtn.style.display = '';
     if (helpEl) helpEl.classList.add('hidden');
     if (hudEl) hudEl.classList.add('activity-active');
     if (participantIdInput) participantIdInput.disabled = true;
@@ -902,6 +904,46 @@ export function checkDockingTolerance() {
     return { inTolerance, posErrorCm, yawErrorDeg };
 }
 
+export function resetToInitialState() {
+    currentTrial = 1;
+    workspaceLocked = false;
+    appState = STATE_DETECTING_SURFACE;
+    trialStartTime = 0;
+    wrongSelections = 0;
+    touchCount = 0;
+    trackingLostCount = 0;
+
+    if (selectedObject) {
+        deselectObject();
+    }
+    if (centerReticle) {
+        centerReticle.classList.add('hidden');
+    }
+    if (startActivityBtn) {
+        startActivityBtn.classList.remove('hidden');
+    }
+    if (confirmBtn) {
+        confirmBtn.style.display = '';
+    }
+    if (helpEl) {
+        helpEl.classList.remove('hidden');
+    }
+    if (hudEl) {
+        hudEl.classList.remove('activity-active');
+    }
+    if (participantIdInput) {
+        participantIdInput.disabled = false;
+    }
+
+    const pos = (reticle && reticle.visible) ?
+        new THREE.Vector3().setFromMatrixPosition(reticle.matrix) :
+        (targetGroup ? targetGroup.position.clone() : new THREE.Vector3(0, surfaceY || -0.15, -0.7));
+    if (surfacePlaced) {
+        pos.y = surfaceY;
+    }
+    placeWorkspace(pos);
+}
+
 export function confirmTrial() {
     if (appState === STATE_FINISHED) return;
 
@@ -952,10 +994,8 @@ export function confirmTrial() {
         appState = STATE_SELECTING_OBJECT;
         updateStatus(`Trial ${currentTrial}: Alvo ${COLORS[targetColorIndex].name} | Selecione o cubo`);
     } else {
-        appState = STATE_FINISHED;
-        trialStartTime = 0;
-        if (hudEl) hudEl.classList.remove('activity-active');
-        if (confirmBtn) confirmBtn.style.display = 'none';
+        // Concluiu os 3 trials: reseta para o estado inicial e exibe o botão começar atividade
+        resetToInitialState();
         updateStatus("3 trials concluídos! Avalie a fadiga.");
         showFatigueModal();
     }
@@ -979,7 +1019,8 @@ export function handleFatigueRating(rating) {
     });
 
     if (fatigueModal) fatigueModal.classList.add('hidden');
-    updateStatus("Fadiga registrada! Baixe o CSV.");
+    if (startActivityBtn) startActivityBtn.classList.remove('hidden');
+    updateStatus("Fadiga registrada! Inicie nova atividade.");
 }
 
 // ===========================================================================
@@ -990,6 +1031,9 @@ function setupEventListeners() {
         if (e) {
             e.preventDefault();
             e.stopPropagation();
+        }
+        if (fatigueModal) {
+            fatigueModal.classList.add('hidden');
         }
         lockWorkspace();
     };
@@ -1003,27 +1047,7 @@ function setupEventListeners() {
             e.preventDefault();
             e.stopPropagation();
         }
-        workspaceLocked = false;
-        appState = STATE_DETECTING_SURFACE;
-        trialStartTime = 0;
-        if (selectedObject) deselectObject();
-        if (centerReticle) centerReticle.classList.add('hidden');
-        if (startActivityBtn) {
-            startActivityBtn.classList.remove('hidden');
-        }
-        if (helpEl) {
-            helpEl.classList.remove('hidden');
-        }
-        if (hudEl) {
-            hudEl.classList.remove('activity-active');
-        }
-        if (participantIdInput) {
-            participantIdInput.disabled = false;
-        }
-        const pos = (reticle && reticle.visible) ?
-            new THREE.Vector3().setFromMatrixPosition(reticle.matrix) :
-            (targetGroup ? targetGroup.position.clone() : new THREE.Vector3(0, -0.15, -0.7));
-        placeWorkspace(pos);
+        resetToInitialState();
         updateStatus(reticle && reticle.visible ? "Superfície detectada" : "Escaneando...");
     };
 
