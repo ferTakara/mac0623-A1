@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>MAC0623 — A4</title>
   <link rel="stylesheet" href="./css/style.css" />
   <style>
@@ -20,17 +20,16 @@
       <label id="mappingLabel">Mapping
         <select id="mappingSelect">
           <option value="1">1 — baseline: touch gestures</option>
+          <option value="2">2 — raycast + phone motion</option>
         </select>
       </label>
-      <span id="trialCount">Trial 1</span>
-      <button id="reconfigBtn">Reconfigurar Posição</button>
       <button id="confirmBtn">Confirm (Enter)</button>
       <button id="downloadBtn">Download CSV</button>
       <span id="status">—</span>
     </div>
 
-    <!-- Botão inferior para fixar o workspace e iniciar a atividade (nasce oculto) -->
-    <button id="startActivityBtn" class="hidden">Começar atividade?</button>
+    <!-- Botão inferior para fixar o workspace e iniciar a atividade -->
+    <button id="startActivityBtn">Iniciar atividade</button>
 
     <div id="help">
       Toque para selecionar. 1 dedo arrasta, 2 dedos giram. Toque fora ou no botão para deselecionar. Confirm registra o trial.

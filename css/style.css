@@ -25,38 +25,61 @@ html, body {
   top: 0; left: 0; right: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 14px;
+  gap: 12px 16px;
   align-items: center;
-  padding: 8px 14px;
-  background: rgba(15, 15, 15, 0.88);
+  box-sizing: border-box;
+  /* Safezone: acomoda notch, Dynamic Island, câmera frontal e barra de status */
+  padding-top: max(28px, env(safe-area-inset-top, 28px));
+  padding-bottom: 14px;
+  padding-left: max(16px, env(safe-area-inset-left, 16px));
+  padding-right: max(16px, env(safe-area-inset-right, 16px));
+  background: rgba(15, 15, 15, 0.94);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   color: #eee;
-  font-size: 13px;
-  z-index: 10;
-  border-bottom: 1px solid #333;
+  font-size: 14px;
+  z-index: 20;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
 }
 
-#hud label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+#hud label { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 
 #hud input, #hud select {
-  font-size: 13px;
+  font-size: 14px;
   background: #222;
   color: #eee;
-  border: 1px solid #444;
-  border-radius: 3px;
-  padding: 2px 4px;
+  border: 1px solid #555;
+  border-radius: 6px;
+  padding: 6px 10px;
+  min-height: 36px;
+  box-sizing: border-box;
 }
 
 #hud button {
-  font-size: 13px;
-  padding: 4px 12px;
+  font-size: 14px;
+  padding: 8px 16px;
+  min-height: 38px;
   cursor: pointer;
   background: #2a5;
   color: #fff;
   border: none;
-  border-radius: 3px;
+  border-radius: 6px;
+  font-weight: 600;
+  transition: background 0.15s ease, transform 0.1s ease;
 }
 
 #hud button:hover { background: #3c6; }
+#hud button:active { transform: scale(0.97); }
+
+#hud #confirmBtn {
+  background: #3c6;
+  padding: 8px 20px;
+  min-height: 40px;
+  font-size: 15px;
+}
+#hud #confirmBtn:hover { background: #3b82f6; }
+#hud #confirmBtn:active { background: #1d4ed8; }
 
 #hud #downloadBtn { background: #457; }
 #hud #downloadBtn:hover { background: #568; }
@@ -69,7 +92,13 @@ html, body {
 #hud #deselectBtn:active { background: #334155; }
 #hud #deselectBtn.hidden { display: none !important; }
 
-/* HUD compacto durante a atividade no celular */
+/* HUD compacto durante a atividade no celular (área generosa e confortável) */
+#hud.activity-active {
+  padding-top: max(32px, env(safe-area-inset-top, 32px));
+  padding-bottom: 16px;
+  min-height: 72px;
+}
+
 #hud.activity-active #participantLabel,
 #hud.activity-active #mappingLabel,
 #hud.activity-active #reconfigBtn,
@@ -81,18 +110,26 @@ html, body {
   display: inline-block !important;
 }
 
+#hud #trialCount {
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+}
+
 /* Live delta-position / delta-orientation readout. Turns green when both
    are within tolerance — a hint for the participant, not a gate:
    Confirm still works out of tolerance (see main.js). */
 #status {
   margin-left: auto;
   font-weight: 600;
-  padding: 2px 10px;
-  border-radius: 3px;
-  background: #333;
+  padding: 6px 14px;
+  border-radius: 6px;
+  background: #2a2a2a;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 14px;
 }
 
-#status.in-tolerance { background: #274; color: #9f9; }
+#status.in-tolerance { background: #1b5e20; color: #a5d6a7; border-color: #34c759; }
 
 /* ---- Help caption (bottom-left) ---- */
 
@@ -143,20 +180,20 @@ canvas { display: block; }
 
 #startActivityBtn {
   position: fixed;
-  bottom: 28px;
+  bottom: max(32px, env(safe-area-inset-bottom, 32px));
   left: 50%;
   transform: translateX(-50%);
   background: #2a5;
   color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  padding: 12px 26px;
-  border-radius: 4px;
-  font-size: 15px;
-  font-weight: 600;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  padding: 14px 28px;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 700;
   text-align: center;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
   cursor: pointer;
-  z-index: 30;
+  z-index: 50;
   pointer-events: auto;
   transition: opacity .25s, visibility .25s;
   white-space: nowrap;

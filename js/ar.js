@@ -9,6 +9,7 @@ export const TARGET_DISTANCE_MIN = 0.30;
 export const TARGET_DISTANCE_MAX = 0.45; 
 export const TOLERANCE_POS_CM = 2.0;
 export const TOLERANCE_YAW_DEG = 10.0;
+export const ROTATION_GAIN_TECHNIQUE2 = 2.0; // Ganho rotacional 1:2 para ergonomia
 
 // Cores disponíveis para os cubos candidatos e o alvo fantasma
 export const COLORS = [
@@ -87,14 +88,30 @@ const hudEl = document.getElementById("hud");
 const helpEl = document.getElementById("help");
 const participantIdInput = document.getElementById("participantId");
 const mappingSelect = document.getElementById("mappingSelect");
-const trialCountEl = document.getElementById("trialCount");
 const confirmBtn = document.getElementById("confirmBtn");
 const downloadBtn = document.getElementById("downloadBtn");
-const reconfigBtn = document.getElementById("reconfigBtn");
 const startActivityBtn = document.getElementById("startActivityBtn");
 const statusEl = document.getElementById("status");
 const fatigueModal = document.getElementById("fatigueModal");
 const fatigueButtons = document.getElementById("fatigueButtons");
+const centerReticle = document.getElementById("centerReticle");
+
+// Variáveis para Técnica 2 (Raycast Central + Rotação pelo Celular como Volante)
+let lastPhoneRoll = 0;
+
+export function isTechnique2() {
+    return mappingSelect && mappingSelect.value === "2";
+}
+
+export function getPhoneRoll(cam) {
+    if (!cam) return 0;
+    const camQuat = new THREE.Quaternion();
+    cam.getWorldQuaternion(camQuat);
+    const invQuat = camQuat.clone().invert();
+    // Vetor UP do mundo projetado no referencial local da tela do smartphone
+    const localUp = new THREE.Vector3(0, 1, 0).applyQuaternion(invQuat);
+    return Math.atan2(localUp.x, localUp.y);
+}
 
 
 // ===========================================================================
@@ -149,6 +166,9 @@ export function init() {
 
     // Instanciação da área de trabalho da atividade (Alvo Fantasma + 3 Cubos Candidatos)
     placeWorkspace(new THREE.Vector3(0, -0.15, -0.7));
+    if (startActivityBtn) {
+        startActivityBtn.classList.remove('hidden');
+    }
     updateStatus("Escaneando...");
 
     setupEventListeners();
@@ -199,7 +219,7 @@ export function lockWorkspace() {
 
     appState = STATE_SELECTING_OBJECT;
     if (targetColorIndex !== undefined && COLORS[targetColorIndex]) {
-        updateStatus(`Alvo: ${COLORS[targetColorIndex].name} | Selecione o cubo correspondente`);
+        updateStatus(`Alvo: ${COLORS[targetColorIndex].name}`);
     }
 }
 
@@ -272,7 +292,7 @@ async function onSessionStart() {
     workspaceLocked = false;
     appState = STATE_DETECTING_SURFACE;
     if (startActivityBtn) {
-        startActivityBtn.classList.add('hidden'); // Permanece oculto até posicionar a mesa
+        startActivityBtn.classList.remove('hidden');
     }
     if (helpEl) {
         helpEl.classList.remove('hidden');
@@ -534,6 +554,7 @@ export function deselectObject() {
     isTwisting = false;
     touchHasMoved = false;
     objectSelectedAtTouchStart = false;
+    if (centerReticle) centerReticle.classList.add('hidden');
     appState = STATE_SELECTING_OBJECT;
     if (navigator.vibrate) navigator.vibrate(40);
     if (targetColorIndex !== undefined && COLORS[targetColorIndex]) {
@@ -562,16 +583,41 @@ export function selectCube(cube) {
             wrongSelections++;
         }
 
-        // Prepara arrasto imediato se o usuário mantiver o dedo na tela
-        if (tabletopPlane) {
-            const hitPoint = new THREE.Vector3();
-            if (raycaster.ray.intersectPlane(tabletopPlane, hitPoint)) {
-                dragOffset.set(
-                    hitPoint.x - selectedObject.position.x,
-                    0,
-                    hitPoint.z - selectedObject.position.z
-                );
-                isDragging = true;
+        if (isTechnique2()) {
+            isDragging = false;
+            isTwisting = false;
+            const activeCamera = getActiveCamera();
+            if (activeCamera) {
+                lastPhoneRoll = getPhoneRoll(activeCamera);
+
+                // Opção A: Posiciona imediatamente o cubo no centro da mira do celular
+                if (tabletopPlane) {
+                    const centerRay = new THREE.Raycaster();
+                    centerRay.setFromCamera({ x: 0, y: 0 }, activeCamera);
+                    const hitPoint = new THREE.Vector3();
+                    if (centerRay.ray.intersectPlane(tabletopPlane, hitPoint)) {
+                        const dist = hitPoint.distanceTo(activeCamera.position);
+                        if (dist < 5.0 && centerRay.ray.direction.y < 0) {
+                            selectedObject.position.x = hitPoint.x;
+                            selectedObject.position.z = hitPoint.z;
+                            selectedObject.position.y = surfaceY + CUBE_SIZE / 2;
+                        }
+                    }
+                }
+            }
+            if (centerReticle) centerReticle.classList.remove('hidden');
+        } else {
+            // Técnica 1: Prepara arrasto imediato se o usuário mantiver o dedo na tela
+            if (tabletopPlane) {
+                const hitPoint = new THREE.Vector3();
+                if (raycaster.ray.intersectPlane(tabletopPlane, hitPoint)) {
+                    dragOffset.set(
+                        hitPoint.x - selectedObject.position.x,
+                        0,
+                        hitPoint.z - selectedObject.position.z
+                    );
+                    isDragging = true;
+                }
             }
         }
 
@@ -648,6 +694,15 @@ function onTouchStart(event) {
     if (event.target.closest('#hud') || event.target.closest('button') || event.target.closest('select') || event.target.closest('input') || event.target.closest('#fatigueModal')) {
         return;
     }
+
+    // Safezone do cabeçalho: ignora toques na zona superior / notch / margem do HUD
+    if (hudEl && event.touches[0]) {
+        const hudRect = hudEl.getBoundingClientRect();
+        if (event.touches[0].clientY <= hudRect.bottom + 12) {
+            return;
+        }
+    }
+
     event.preventDefault();
 
     // Incrementa touchCount apenas durante a execução da tarefa (seleção e manipulação)
@@ -668,7 +723,7 @@ function onTouchStart(event) {
             if (!selected && !workspaceLocked && appState === STATE_DETECTING_SURFACE) {
                 onSelect();
             }
-        } else if (appState === STATE_MANIPULATING && selectedObject && tabletopPlane) {
+        } else if (appState === STATE_MANIPULATING && selectedObject && tabletopPlane && !isTechnique2()) {
             updatePointer(touch.clientX, touch.clientY);
             const activeCamera = getActiveCamera();
             raycaster.setFromCamera(pointer, activeCamera);
@@ -686,7 +741,7 @@ function onTouchStart(event) {
                 }
             }
         }
-    } else if (event.touches.length === 2 && appState === STATE_MANIPULATING && selectedObject) {
+    } else if (event.touches.length === 2 && appState === STATE_MANIPULATING && selectedObject && !isTechnique2()) {
         isDragging = false;
         isTwisting = true;
         touchHasMoved = true;
@@ -701,7 +756,20 @@ function onTouchMove(event) {
     if (event.target.closest('#hud') || event.target.closest('button') || event.target.closest('select') || event.target.closest('input')) {
         return;
     }
+
+    if (hudEl && event.touches[0]) {
+        const hudRect = hudEl.getBoundingClientRect();
+        if (event.touches[0].clientY <= hudRect.bottom + 12) {
+            return;
+        }
+    }
+
     event.preventDefault();
+
+    // Na Técnica 2, a translação e rotação são controladas pelo movimento do celular
+    if (isTechnique2()) {
+        return;
+    }
 
     if (event.touches.length === 1 && selectedObject && appState === STATE_MANIPULATING && tabletopPlane) {
         const touch = event.touches[0];
@@ -861,9 +929,11 @@ export function confirmTrial() {
         arm_fatigue: lastArmFatigue ?? ""
     });
 
+    if (centerReticle) centerReticle.classList.add('hidden');
+    selectedObject = null;
+
     if (currentTrial < 3) {
         currentTrial++;
-        if (trialCountEl) trialCountEl.textContent = `Trial ${currentTrial}`;
 
         // Reset das métricas para o próximo trial e início do timer
         wrongSelections = 0;
@@ -893,6 +963,10 @@ export function confirmTrial() {
 
 export function showFatigueModal() {
     if (fatigueModal) {
+        const titleSpan = fatigueModal.querySelector('span');
+        if (titleSpan) {
+            titleSpan.textContent = `Fim da Técnica ${mappingSelect ? mappingSelect.value : "1"}! Quão cansados estão seus braços?`;
+        }
         fatigueModal.classList.remove('hidden');
     }
 }
@@ -932,6 +1006,8 @@ function setupEventListeners() {
         workspaceLocked = false;
         appState = STATE_DETECTING_SURFACE;
         trialStartTime = 0;
+        if (selectedObject) deselectObject();
+        if (centerReticle) centerReticle.classList.add('hidden');
         if (startActivityBtn) {
             startActivityBtn.classList.remove('hidden');
         }
@@ -950,10 +1026,6 @@ function setupEventListeners() {
         placeWorkspace(pos);
         updateStatus(reticle && reticle.visible ? "Superfície detectada" : "Escaneando...");
     };
-    if (reconfigBtn) {
-        reconfigBtn.addEventListener('click', handleReconfig);
-        reconfigBtn.addEventListener('touchend', handleReconfig);
-    }
 
     const handleConfirm = (e) => {
         if (e) {
@@ -991,6 +1063,19 @@ function setupEventListeners() {
             btn.addEventListener('touchend', onRating);
         });
     }
+
+    function updateHelpText() {
+        if (!helpEl) return;
+        if (isTechnique2()) {
+            helpEl.textContent = "Técnica 2: Toque no cubo para selecionar. Mova o celular para posicionar. Gire o celular como um volante para rotacionar. Confirm registra o trial.";
+        } else {
+            helpEl.textContent = "Técnica 1: Toque para selecionar. 1 dedo arrasta, 2 dedos giram. Toque fora para deselecionar. Confirm registra o trial.";
+        }
+    }
+    if (mappingSelect) {
+        mappingSelect.addEventListener('change', updateHelpText);
+    }
+    updateHelpText();
 
     window.addEventListener('keydown', (event) => {
         if (event.key === 'Enter') {
@@ -1104,6 +1189,37 @@ function render(timestamp, frame) {
             }
         } else if (reticle) {
             reticle.visible = false;
+        }
+    }
+
+    // 3. Atualização contínua da Técnica 2: Raycast Central e Rotação pelo Movimento do Celular
+    if (isTechnique2() && appState === STATE_MANIPULATING && selectedObject && tabletopPlane) {
+        const activeCamera = getActiveCamera();
+        if (activeCamera) {
+            // Translação: Raycast emitido do centro exato da tela (0, 0)
+            raycaster.setFromCamera({ x: 0, y: 0 }, activeCamera);
+            const hitPoint = new THREE.Vector3();
+            if (raycaster.ray.intersectPlane(tabletopPlane, hitPoint)) {
+                const dist = hitPoint.distanceTo(activeCamera.position);
+                // Valida se o raio aponta para a mesa e em distância plausível (< 5 metros)
+                if (dist < 5.0 && raycaster.ray.direction.y < 0) {
+                    selectedObject.position.x = hitPoint.x;
+                    selectedObject.position.z = hitPoint.z;
+                    selectedObject.position.y = surfaceY + CUBE_SIZE / 2;
+                }
+            }
+
+            // Rotação: Mapeamento tipo Volante com ganho (Roll do celular rotaciona o Yaw do cubo)
+            const currentPhoneRoll = getPhoneRoll(activeCamera);
+            let deltaRoll = currentPhoneRoll - lastPhoneRoll;
+            while (deltaRoll > Math.PI) deltaRoll -= Math.PI * 2;
+            while (deltaRoll < -Math.PI) deltaRoll += Math.PI * 2;
+
+            selectedObject.rotation.y += deltaRoll * ROTATION_GAIN_TECHNIQUE2;
+            lastPhoneRoll = currentPhoneRoll;
+
+            // Feedback imediato no HUD e no anel de tolerância
+            checkDockingTolerance();
         }
     }
 
