@@ -1,0 +1,12 @@
+# Servidor local e certificados SSL
+server.py
+*.pem
+*-key.pem
+
+# Python e ambientes virtuais
+.venv/
+__pycache__/
+*.pyc
+
+# IDEs
+.vscode/

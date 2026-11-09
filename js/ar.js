@@ -195,6 +195,7 @@ export function lockWorkspace() {
     touchCount = 0;
     trackingLostCount = 0;
     wrongSelections = 0;
+    trialStartTime = performance.now();
 
     appState = STATE_SELECTING_OBJECT;
     if (targetColorIndex !== undefined && COLORS[targetColorIndex]) {
@@ -557,6 +558,10 @@ export function selectCube(cube) {
         }
         appState = STATE_MANIPULATING;
 
+        if (!selectedObject.userData.isTarget) {
+            wrongSelections++;
+        }
+
         // Prepara arrasto imediato se o usuário mantiver o dedo na tela
         if (tabletopPlane) {
             const hitPoint = new THREE.Vector3();
@@ -860,11 +865,11 @@ export function confirmTrial() {
         currentTrial++;
         if (trialCountEl) trialCountEl.textContent = `Trial ${currentTrial}`;
 
-        // Reset das métricas para o próximo trial
+        // Reset das métricas para o próximo trial e início do timer
         wrongSelections = 0;
         touchCount = 0;
         trackingLostCount = 0;
-        trialStartTime = 0;
+        trialStartTime = performance.now();
 
         // Reposiciona novo alvo e cubos no mesmo plano da mesa
         const currentPos = targetGroup ? targetGroup.position.clone() : new THREE.Vector3(0, surfaceY, -0.7);
@@ -878,6 +883,7 @@ export function confirmTrial() {
         updateStatus(`Trial ${currentTrial}: Alvo ${COLORS[targetColorIndex].name} | Selecione o cubo`);
     } else {
         appState = STATE_FINISHED;
+        trialStartTime = 0;
         if (hudEl) hudEl.classList.remove('activity-active');
         if (confirmBtn) confirmBtn.style.display = 'none';
         updateStatus("3 trials concluídos! Avalie a fadiga.");
@@ -925,6 +931,7 @@ function setupEventListeners() {
         }
         workspaceLocked = false;
         appState = STATE_DETECTING_SURFACE;
+        trialStartTime = 0;
         if (startActivityBtn) {
             startActivityBtn.classList.remove('hidden');
         }
@@ -947,14 +954,6 @@ function setupEventListeners() {
         reconfigBtn.addEventListener('click', handleReconfig);
         reconfigBtn.addEventListener('touchend', handleReconfig);
     }
-
-    const handleDeselect = (e) => {
-        if (e) {
-            e.preventDefault();
-            e.stopPropagation();
-        }
-        deselectObject();
-    };
 
     const handleConfirm = (e) => {
         if (e) {
