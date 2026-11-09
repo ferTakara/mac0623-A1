@@ -206,6 +206,12 @@ export function updatePointer(clientX, clientY) {
 export function lockWorkspace() {
     workspaceLocked = true;
     currentTrial = 1;
+
+    // Reseta as posições dos cubos e exibe o alvo fantasma para a atividade
+    const currentPos = targetGroup ? targetGroup.position.clone() : new THREE.Vector3(0, surfaceY || -0.15, -0.7);
+    if (surfacePlaced) currentPos.y = surfaceY;
+    placeWorkspace(currentPos);
+
     if (startActivityBtn) startActivityBtn.classList.add('hidden');
     if (confirmBtn) confirmBtn.style.display = '';
     if (helpEl) helpEl.classList.add('hidden');
@@ -221,7 +227,7 @@ export function lockWorkspace() {
 
     appState = STATE_SELECTING_OBJECT;
     if (targetColorIndex !== undefined && COLORS[targetColorIndex]) {
-        updateStatus(`Alvo: ${COLORS[targetColorIndex].name}`);
+        updateStatus(`Trial 1: Alvo ${COLORS[targetColorIndex].name} | Selecione o cubo`);
     }
 }
 
@@ -447,6 +453,8 @@ export function placeWorkspace(position) {
     targetGroup = createDockingCube(targetColor.hex, true);
     targetGroup.position.set(position.x, surfaceY + CUBE_SIZE / 2, position.z);
     targetGroup.rotation.y = Math.random() * Math.PI * 2;
+    // Oculto no treino livre, visível apenas com a atividade iniciada
+    targetGroup.visible = Boolean(workspaceLocked);
     scene.add(targetGroup);
 
     // 5. Instancia os 3 cubos candidatos (Vermelho, Verde, Azul) a ~38 cm do alvo
@@ -499,10 +507,10 @@ export function placeWorkspace(position) {
 
     if (!workspaceLocked) {
         appState = STATE_DETECTING_SURFACE;
-        updateStatus("Superfície detectada");
+        updateStatus("Superfície detectada | Treino livre: teste os cubos");
     } else {
         appState = STATE_SELECTING_OBJECT;
-        updateStatus(`Alvo: ${targetColor.name} | Selecione o cubo`);
+        updateStatus(`Trial ${currentTrial}: Alvo ${targetColor.name} | Selecione o cubo`);
     }
 }
 
@@ -557,10 +565,12 @@ export function deselectObject() {
     touchHasMoved = false;
     objectSelectedAtTouchStart = false;
     if (centerReticle) centerReticle.classList.add('hidden');
-    appState = STATE_SELECTING_OBJECT;
+    appState = workspaceLocked ? STATE_SELECTING_OBJECT : STATE_DETECTING_SURFACE;
     if (navigator.vibrate) navigator.vibrate(40);
-    if (targetColorIndex !== undefined && COLORS[targetColorIndex]) {
-        updateStatus(`Alvo: ${COLORS[targetColorIndex].name} | Selecione o cubo`);
+    if (!workspaceLocked) {
+        updateStatus("Treino livre: toque em qualquer cubo para testar");
+    } else if (targetColorIndex !== undefined && COLORS[targetColorIndex]) {
+        updateStatus(`Trial ${currentTrial}: Alvo ${COLORS[targetColorIndex].name} | Selecione o cubo`);
     } else {
         updateStatus("Selecione o cubo correspondente");
     }
@@ -569,63 +579,62 @@ export function deselectObject() {
 export function selectCube(cube) {
     if (!cube) return false;
 
-    else {
-        selectedObject = cube;
-        applySelectionHighlight(selectedObject);
+    selectedObject = cube;
+    applySelectionHighlight(selectedObject);
 
-        // Feedback tátil de sucesso no celular
-        if (navigator.vibrate) navigator.vibrate([40, 40, 40]);
+    // Feedback tátil de sucesso no celular
+    if (navigator.vibrate) navigator.vibrate([40, 40, 40]);
 
+    if (workspaceLocked) {
         if (trialStartTime === 0) {
             trialStartTime = performance.now();
         }
-        appState = STATE_MANIPULATING;
-
         if (!selectedObject.userData.isTarget) {
             wrongSelections++;
         }
+    }
+    appState = STATE_MANIPULATING;
 
-        if (isTechnique2()) {
-            isDragging = false;
-            isTwisting = false;
-            const activeCamera = getActiveCamera();
-            if (activeCamera) {
-                lastPhoneRoll = getPhoneRoll(activeCamera);
+    if (isTechnique2()) {
+        isDragging = false;
+        isTwisting = false;
+        const activeCamera = getActiveCamera();
+        if (activeCamera) {
+            lastPhoneRoll = getPhoneRoll(activeCamera);
 
-                // Opção A: Posiciona imediatamente o cubo no centro da mira do celular
-                if (tabletopPlane) {
-                    const centerRay = new THREE.Raycaster();
-                    centerRay.setFromCamera({ x: 0, y: 0 }, activeCamera);
-                    const hitPoint = new THREE.Vector3();
-                    if (centerRay.ray.intersectPlane(tabletopPlane, hitPoint)) {
-                        const dist = hitPoint.distanceTo(activeCamera.position);
-                        if (dist < 5.0 && centerRay.ray.direction.y < 0) {
-                            selectedObject.position.x = hitPoint.x;
-                            selectedObject.position.z = hitPoint.z;
-                            selectedObject.position.y = surfaceY + CUBE_SIZE / 2;
-                        }
+            // Posiciona imediatamente o cubo no centro da mira do celular
+            if (tabletopPlane) {
+                const centerRay = new THREE.Raycaster();
+                centerRay.setFromCamera({ x: 0, y: 0 }, activeCamera);
+                const hitPoint = new THREE.Vector3();
+                if (centerRay.ray.intersectPlane(tabletopPlane, hitPoint)) {
+                    const dist = hitPoint.distanceTo(activeCamera.position);
+                    if (dist < 5.0 && centerRay.ray.direction.y < 0) {
+                        selectedObject.position.x = hitPoint.x;
+                        selectedObject.position.z = hitPoint.z;
+                        selectedObject.position.y = surfaceY + CUBE_SIZE / 2;
                     }
                 }
             }
-            if (centerReticle) centerReticle.classList.remove('hidden');
-        } else {
-            // Técnica 1: Prepara arrasto imediato se o usuário mantiver o dedo na tela
-            if (tabletopPlane) {
-                const hitPoint = new THREE.Vector3();
-                if (raycaster.ray.intersectPlane(tabletopPlane, hitPoint)) {
-                    dragOffset.set(
-                        hitPoint.x - selectedObject.position.x,
-                        0,
-                        hitPoint.z - selectedObject.position.z
-                    );
-                    isDragging = true;
-                }
+        }
+        if (centerReticle) centerReticle.classList.remove('hidden');
+    } else {
+        // Técnica 1: Prepara arrasto imediato se o usuário mantiver o dedo na tela
+        if (tabletopPlane) {
+            const hitPoint = new THREE.Vector3();
+            if (raycaster.ray.intersectPlane(tabletopPlane, hitPoint)) {
+                dragOffset.set(
+                    hitPoint.x - selectedObject.position.x,
+                    0,
+                    hitPoint.z - selectedObject.position.z
+                );
+                isDragging = true;
             }
         }
-
-        checkDockingTolerance();
-        return true;
     }
+
+    checkDockingTolerance();
+    return true;
 }
 
 export function handleObjectSelection(clientX, clientY) {
@@ -660,9 +669,6 @@ export function handleObjectSelection(clientX, clientY) {
     }
 
     if (pickedCube) {
-        if (!workspaceLocked) {
-            lockWorkspace();
-        }
         return selectCube(pickedCube);
     }
     return false;
@@ -708,7 +714,7 @@ function onTouchStart(event) {
     event.preventDefault();
 
     // Incrementa touchCount apenas durante a execução da tarefa (seleção e manipulação)
-    if (appState === STATE_SELECTING_OBJECT || appState === STATE_MANIPULATING) {
+    if (workspaceLocked && (appState === STATE_SELECTING_OBJECT || appState === STATE_MANIPULATING)) {
         touchCount++;
     }
 
@@ -878,6 +884,16 @@ export function checkDockingTolerance() {
         return { inTolerance: false, posErrorCm: 0, yawErrorDeg: 0 };
     }
 
+    // Se o alvo fantasma não estiver visível (modo de treino livre antes de iniciar a atividade)
+    if (!targetGroup.visible || !workspaceLocked) {
+        updateStatus(`Treino livre (${selectedObject.userData.colorName}) | Inicie a atividade quando estiver pronto`);
+        return { inTolerance: false, posErrorCm: 0, yawErrorDeg: 0 };
+    }
+
+    if (!targetCube) {
+        return { inTolerance: false, posErrorCm: 0, yawErrorDeg: 0 };
+    }
+
     // 1. Erro de translação no plano horizontal XZ (em cm)
     const dx = (targetCube.position.x - targetGroup.position.x) * 100;
     const dz = (targetCube.position.z - targetGroup.position.z) * 100;
@@ -946,6 +962,11 @@ export function resetToInitialState() {
 
 export function confirmTrial() {
     if (appState === STATE_FINISHED) return;
+
+    if (!workspaceLocked) {
+        updateStatus("Inicie primeiro a atividade clicando em 'Iniciar atividade'!");
+        return;
+    }
 
     if (appState !== STATE_MANIPULATING) {
         updateStatus("Selecione primeiro o cubo correspondente!");
@@ -1158,7 +1179,7 @@ function render(timestamp, frame) {
         const trackingOk = Boolean(viewerPose && !viewerPose.emulatedPosition);
 
         // Contabiliza tracking_lost apenas durante a execução da tarefa
-        if (appState === STATE_SELECTING_OBJECT || appState === STATE_MANIPULATING) {
+        if (workspaceLocked && (appState === STATE_SELECTING_OBJECT || appState === STATE_MANIPULATING)) {
             if (!trackingOk && lastTrackingState) {
                 trackingLostCount++;
                 lastTrackingState = false;
