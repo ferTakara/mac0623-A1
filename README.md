@@ -2,7 +2,8 @@
 
 **Course:** MAC0623 / MAC6923 — 3D Interaction in Mixed Realities (2026)  
 **Author:** Fernando Ramos Takara  
-**Live Demo:** https://fertakara.github.io/mac0623-A1/ 
+**Live Demo (Desktop / VR):** https://fertakara.github.io/mac0623-A1/  
+**Live Demo (Mobile AR):** https://fertakara.github.io/mac0623-A1/ar.html  
 
 ## Abstract
 
@@ -48,12 +49,14 @@ Accessible via `ar.html`. Runs on mobile WebXR-compatible browsers (e.g. Chrome 
    - **Rotation ("Steering Wheel" / Volante)**: The physical lateral tilt (roll) of the smartphone rotates the cube's yaw, amplified by an ergonomic `1:2` sensitivity gain (`ROTATION_GAIN = 2.0`).
 3. **Free-Play & Familiarization Mode**:
    - Before starting the recorded activity, the target ghost cube is hidden. Users can freely select, move, and rotate any cube to practice and adapt to the interaction technique without triggering timers or recording errors.
-4. **Experiment Workflow & Fatigue Assessment**:
+4. **Ergonomic Safe-Zone & Mobile UI**:
+   - Dynamic viewport calculation with CSS `env(safe-area-inset-*)` prevents camera punch-holes, notches, and Android system navigation gestures from interfering with touch controls or obscuring the HUD.
+5. **Experiment Workflow & Fatigue Assessment**:
    - Pressing **"Iniciar atividade"** locks the workspace, displays the target ghost cube with a random yaw and target color, resets candidate cubes to their initial arc layout (~38 cm from target), and begins Trial 1.
    - Real-time docking tolerance feedback (Δpos ≤ 2.0 cm, Δyaw ≤ 10° turning green on the HUD status pill).
    - **Confirm** button validates each trial.
    - After completing 3 trials, an arm fatigue questionnaire modal (rating 1 to 5) appears.
-   - Once rated, the system automatically returns to the initial state, ready for another session.
+   - Once rated, the system automatically returns to the initial state with "Iniciar atividade" available for further sessions.
 
 ## Code Structure
 - `index.html`: Entry point for Desktop and VR tasks (A1/A2/A3).
@@ -67,7 +70,14 @@ Accessible via `ar.html`. Runs on mobile WebXR-compatible browsers (e.g. Chrome 
   - `waypoint.js`: Logic for spawning and validating navigation targets.
   - `wim.js`: Mini-map rendering and WIM-to-world coordinate transformations.
   - `teleport.js`: Visuals and Bezier curve math for the joystick teleport.
-- `Assignment-1/`, `Assignment-2/`, `Assignment-3/`: Data analysis, Jupyter notebooks, boxplots, CSV datasets, and LaTeX reports.
+- `Assignment-1/`, `Assignment-2/`, `Assignment-3/`, `Assignment-4/`:
+  - `Assignment-4/`: Complete assignment package for Mobile AR Docking:
+    - `Relatório_A4.pdf`: Academic evaluation report.
+    - `Design_A4.pdf`: Pre-implementation conceptual design draft with storyboard.
+    - `demo.webm`: Screen recording demo (< 1 min) illustrating both interaction techniques.
+    - `CSV/`: Raw empirical telemetry datasets from all participant trials (`P01-touch.csv`, `P01-technique2.csv`, `P02-touch.csv`, `P02-technique2.csv`).
+    - `gerar_boxplots_a4.py`: Statistical analysis and boxplot visualization script.
+  - `Assignment-1/` to `Assignment-3/`: Data analysis, Jupyter notebooks, boxplots, CSV datasets, and LaTeX reports for previous milestones.
 
 ## How to Run Locally
 
