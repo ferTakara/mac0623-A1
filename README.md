@@ -58,7 +58,6 @@ Accessible via `ar.html`. Runs on mobile WebXR-compatible browsers (e.g. Chrome 
 ## Code Structure
 - `index.html`: Entry point for Desktop and VR tasks (A1/A2/A3).
 - `ar.html`: Entry point for Mobile AR tabletop manipulation (A4) with mobile safe-area support.
-- `server.py`: Local HTTPS development server with auto-detection of real LAN IP, automatic `mkcert` SSL certificate management, and scannable terminal QR code.
 - `css/style.css`: Styles for HUD overlay, center reticle, fatigue modal, safe-area insets, and buttons.
 - `js/`: Application logic.
   - `ar.js`: Full WebXR AR logic, surface detection, hit-testing, Technique 1 (multi-touch) and Technique 2 (raycast + steering wheel roll), trial lifecycle, and metrics logging.
@@ -83,14 +82,13 @@ This project requires no build tools or bundlers. It uses ES modules and imports
 
 ### Mobile AR (A4)
 WebXR AR on mobile devices requires a secure origin (HTTPS):
-1. Run the dedicated secure server:
-   ```bash
-   python3 server.py
-   ```
-   * Automatically detects your machine's real LAN IP (Wi-Fi, Ethernet, or Hotspot).
-   * Generates or validates an SSL certificate for the current IP via `mkcert`.
-   * Displays a scannable **QR Code** directly in the terminal to open `https://<YOUR-IP>:8001/ar.html` on your mobile device without typing.
-2. Scan the terminal QR code with your phone or navigate directly to the displayed URL.
+1. **GitHub Pages (Direct Access)**:
+   - Open `https://fertakara.github.io/mac0623-A1/ar.html` directly on your mobile device (e.g., Chrome on Android with ARCore).
+2. **Local Debugging via Chrome Remote Debugging**:
+   - Start the local HTTP server (`python3 -m http.server 8000`).
+   - Connect the phone via USB with USB Debugging enabled.
+   - On the desktop browser, navigate to `chrome://inspect/#devices` and configure **Port forwarding** (forward port `8000` to `localhost:8000`).
+   - Open `http://localhost:8000/ar.html` on the phone's Chrome browser (`localhost` is treated as a secure origin by WebXR).
 
 ## Usage
 - **Desktop/VR**: Select your preferred Mode (Manipulation or Navigation) and Technique from the dropdown, then click **Enter VR** (or use mouse/keyboard on desktop). Press **Download CSV** to export data.

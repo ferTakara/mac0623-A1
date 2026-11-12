@@ -1,0 +1,4 @@
+participant_id,technique,trial,completion_time_s,pos_error_cm,yaw_error_deg,wrong_selections,touch_count,tracking_lost,arm_fatigue
+P01,touch,1,17.888,0.8,2.2,0,9,0,1
+P01,touch,2,9.008,0.33,2.1,0,10,0,1
+P01,touch,3,6.708,0.32,1.2,0,8,0,1
